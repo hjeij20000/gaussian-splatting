@@ -1,0 +1,26 @@
+# Virtual environments
+venv/
+.venv/
+
+# Build artifacts & caches
+**/__pycache__/
+**/*.egg-info/
+**/build/
+**/*.pyc
+**/*.so
+
+# Output / model data (user mounts these at runtime)
+output/
+output_3dgs/
+test_output/
+
+# SIBR viewer (not included in image)
+SIBR_viewers/
+
+# Git
+.git/
+.gitmodules
+
+# Misc
+*.mp4
+*.ply

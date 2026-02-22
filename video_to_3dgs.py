@@ -20,6 +20,9 @@ import shutil
 import time
 from pathlib import Path
 
+import cv2
+import numpy as np
+
 
 def run_command(cmd, description, cwd=None):
     """Run a shell command and handle errors."""
@@ -28,8 +31,13 @@ def run_command(cmd, description, cwd=None):
     print(f"{'='*60}")
     print(f"Command: {' '.join(cmd)}\n")
 
+    # Clean env to prevent cv2's Qt plugin path from breaking COLMAP's Qt
+    env = os.environ.copy()
+    env.pop("QT_PLUGIN_PATH", None)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+
     start_time = time.time()
-    result = subprocess.run(cmd, cwd=cwd)
+    result = subprocess.run(cmd, cwd=cwd, env=env)
     elapsed_time = time.time() - start_time
 
     if result.returncode != 0:
@@ -44,34 +52,126 @@ def run_command(cmd, description, cwd=None):
     return elapsed_time
 
 
-def extract_frames(video_path: Path, output_dir: Path, fps: int = 2):
-    """Extract frames from video using ffmpeg."""
+def _blur_score(path: Path) -> float:
+    """Compute sharpness score (Laplacian variance). Higher = sharper."""
+    img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    return cv2.Laplacian(img, cv2.CV_64F).var()
+
+
+def select_sharpest_frames(frames_dir: Path, oversample: int = 3):
+    """Smart frame selection: group oversampled frames and keep the sharpest per window.
+
+    Instead of extracting at target FPS and deleting blurry ones (which creates
+    coverage gaps), we extract at oversample * target FPS, then pick the sharpest
+    frame from each window of `oversample` consecutive frames. This guarantees
+    uniform temporal coverage with no gaps.
+    """
+    start_time = time.time()
+
+    frames = sorted(frames_dir.glob("*.jpg"))
+    total = len(frames)
+
+    # Score all frames
+    scores = [(f, _blur_score(f)) for f in frames]
+
+    # Group into windows and pick the sharpest from each
+    kept = []
+    for i in range(0, total, oversample):
+        window = scores[i:i + oversample]
+        best = max(window, key=lambda x: x[1])
+        kept.append(best[0])
+        # Delete the rest
+        for f, _ in window:
+            if f != best[0]:
+                f.unlink()
+
+    # Rename kept frames to be sequential (COLMAP expects this)
+    for i, f in enumerate(kept, 1):
+        new_name = frames_dir / f"frame_{i:04d}.jpg"
+        if f != new_name:
+            f.rename(new_name)
+
+    elapsed = time.time() - start_time
+    minutes = int(elapsed // 60)
+    seconds = elapsed % 60
+    print(f"\n{'='*60}")
+    print(f"[STEP] Smart frame selection (oversample={oversample}x)")
+    print(f"{'='*60}")
+    print(f"[INFO] Scored {total} frames, kept {len(kept)} sharpest (1 per {oversample})")
+    print(f"[TIME] Elapsed: {minutes}m {seconds:.2f}s ({elapsed:.2f}s total)")
+
+    if len(kept) < 3:
+        print("[ERROR] Too few frames for reconstruction")
+        sys.exit(1)
+
+    return elapsed
+
+
+def extract_frames(video_path: Path, output_dir: Path, fps: int = 2,
+                   oversample: int = 3):
+    """Extract frames from video, then pick the sharpest from each time window.
+
+    Extracts at fps * oversample rate, then keeps the sharpest frame per window
+    of `oversample` frames. This ensures uniform coverage with sharp frames.
+    """
     frames_dir = output_dir / "input"
-    frames_dir.mkdir(parents=True, exist_ok=True)
+    if frames_dir.exists():
+        shutil.rmtree(frames_dir)
+    frames_dir.mkdir(parents=True)
+
+    extract_fps = fps * oversample
 
     cmd = [
         "ffmpeg", "-y",
         "-i", str(video_path),
-        "-vf", f"fps={fps}",
+        "-vf", f"fps={extract_fps}",
         "-q:v", "1",
         str(frames_dir / "frame_%04d.jpg")
     ]
 
-    elapsed = run_command(cmd, f"Extracting frames at {fps} FPS")
+    elapsed = run_command(cmd, f"Extracting frames at {extract_fps} FPS (oversample {oversample}x)")
 
     # Count extracted frames
     frame_count = len(list(frames_dir.glob("*.jpg")))
-    print(f"[INFO] Extracted {frame_count} frames")
+    print(f"[INFO] Extracted {frame_count} candidate frames")
 
     if frame_count < 3:
         print("[ERROR] Need at least 3 frames for reconstruction")
         sys.exit(1)
 
+    # Smart selection: pick sharpest from each window
+    select_elapsed = select_sharpest_frames(frames_dir, oversample)
+    elapsed += select_elapsed
+
+    final_count = len(list(frames_dir.glob("*.jpg")))
+    print(f"[INFO] Final frame count: {final_count}")
+
     return frames_dir, elapsed
 
 
-def run_colmap(project_dir: Path, use_gpu: bool = True):
-    """Run COLMAP to estimate camera poses."""
+FASTMAP_DIR = Path("/home/ibrahim/fastmap")
+
+
+def _needs_xvfb():
+    """Check if xvfb-run is needed (no DISPLAY set and xvfb-run available)."""
+    if os.environ.get("DISPLAY"):
+        return False
+    return shutil.which("xvfb-run") is not None
+
+
+def _wrap_colmap_cmd(cmd):
+    """Wrap a COLMAP command with xvfb-run if needed for headless GPU mode."""
+    if _needs_xvfb():
+        return ["xvfb-run", "-a"] + cmd
+    return cmd
+
+
+def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool = False, match_overlap: int = 5):
+    """Run COLMAP feature extraction/matching + SfM reconstruction.
+
+    By default, uses FastMap for the SfM step (mapper). Pass use_colmap_mapper=True
+    to fall back to the original COLMAP mapper.
+    """
 
     input_dir = project_dir / "input"
     distorted_dir = project_dir / "distorted"
@@ -83,40 +183,67 @@ def run_colmap(project_dir: Path, use_gpu: bool = True):
 
     gpu_flag = "1" if use_gpu else "0"
 
+    # FastMap only supports SIMPLE_RADIAL; COLMAP mapper handles OPENCV fine.
+    camera_model = "OPENCV" if use_colmap_mapper else "SIMPLE_RADIAL"
+
     timings = {}
 
-    # Feature extraction
-    cmd = [
+    # Feature extraction (COLMAP)
+    cmd = _wrap_colmap_cmd([
         "colmap", "feature_extractor",
         "--database_path", str(database_path),
         "--image_path", str(input_dir),
         "--ImageReader.single_camera", "1",
-        "--ImageReader.camera_model", "OPENCV",
+        "--ImageReader.camera_model", camera_model,
         "--SiftExtraction.use_gpu", gpu_flag,
-    ]
+    ])
     timings['feature_extraction'] = run_command(cmd, "COLMAP feature extraction")
 
-    # Feature matching
-    cmd = [
-        "colmap", "exhaustive_matcher",
+    # Feature matching (COLMAP)
+    cmd = _wrap_colmap_cmd([
+        "colmap", "sequential_matcher",
         "--database_path", str(database_path),
         "--SiftMatching.use_gpu", gpu_flag,
-    ]
-    timings['feature_matching'] = run_command(cmd, "COLMAP feature matching")
+        "--SequentialMatching.overlap", str(match_overlap),
+    ])
+    timings['feature_matching'] = run_command(cmd, "COLMAP sequential feature matching")
 
     # Sparse reconstruction (Structure from Motion)
-    cmd = [
-        "colmap", "mapper",
-        "--database_path", str(database_path),
-        "--image_path", str(input_dir),
-        "--output_path", str(sparse_dir),
-    ]
-    timings['sparse_reconstruction'] = run_command(cmd, "COLMAP sparse reconstruction")
+    if use_colmap_mapper:
+        cmd = _wrap_colmap_cmd([
+            "colmap", "mapper",
+            "--database_path", str(database_path),
+            "--image_path", str(input_dir),
+            "--output_path", str(sparse_dir),
+        ])
+        timings['sfm_reconstruction'] = run_command(cmd, "COLMAP sparse reconstruction (mapper)")
+    else:
+        # FastMap refuses to write to an existing directory, so use a temp dir
+        # and move the sparse output into the expected location.
+        fastmap_out = distorted_dir / "fastmap_out"
+        if fastmap_out.exists():
+            shutil.rmtree(fastmap_out)
+        cmd = [
+            sys.executable, str(FASTMAP_DIR / "run.py"),
+            "--database", str(database_path),
+            "--image_dir", str(input_dir),
+            "--output_dir", str(fastmap_out),
+            "--headless",
+        ]
+        timings['sfm_reconstruction'] = run_command(cmd, "FastMap sparse reconstruction")
+        # Move sparse/0/ into distorted/sparse/0/
+        src_sparse = fastmap_out / "sparse" / "0"
+        dst_sparse = sparse_dir / "0"
+        if dst_sparse.exists():
+            shutil.rmtree(dst_sparse)
+        shutil.copytree(str(src_sparse), str(dst_sparse))
+        shutil.rmtree(fastmap_out)
+        print(f"[INFO] Moved FastMap output to {dst_sparse}")
 
     # Check if reconstruction succeeded
     model_dirs = list(sparse_dir.glob("*"))
     if not model_dirs:
-        print("[ERROR] COLMAP failed to reconstruct any model")
+        print("[ERROR] SfM failed to reconstruct any model")
         sys.exit(1)
 
     # Use the largest model (most images registered)
@@ -124,7 +251,8 @@ def run_colmap(project_dir: Path, use_gpu: bool = True):
     if not model_path.exists():
         model_path = model_dirs[0]
 
-    print(f"[INFO] Using COLMAP model: {model_path}")
+    sfm_tool = "COLMAP" if use_colmap_mapper else "FastMap"
+    print(f"[INFO] Using {sfm_tool} model: {model_path}")
 
     return model_path, timings
 
@@ -165,7 +293,8 @@ def undistort_images(project_dir: Path):
     return elapsed
 
 
-def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: int = 30000):
+def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: int = 30000,
+                             resolution: int = -1):
     """Train the 3D Gaussian Splatting model."""
 
     script_dir = Path(__file__).parent
@@ -177,6 +306,8 @@ def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: in
         "-m", str(output_dir),
         "--iterations", str(iterations),
     ]
+    if resolution > 0:
+        cmd += ["-r", str(resolution)]
     elapsed = run_command(cmd, f"Training 3DGS model ({iterations} iterations)", cwd=script_dir)
     return elapsed
 
@@ -212,6 +343,14 @@ Examples:
                         help="Skip COLMAP (use existing camera poses)")
     parser.add_argument("--no-gpu", action="store_true",
                         help="Disable GPU for COLMAP")
+    parser.add_argument("--use-colmap", action="store_true",
+                        help="Use COLMAP mapper instead of FastMap for SfM")
+    parser.add_argument("--resolution", "-r", type=int, default=-1,
+                        help="Resolution for 3DGS training (e.g. 2 for half, 4 for quarter)")
+    parser.add_argument("--oversample", type=int, default=3,
+                        help="Extract N x FPS frames, keep sharpest per window (default: 3)")
+    parser.add_argument("--match-overlap", type=int, default=5,
+                        help="COLMAP sequential matching overlap (default: 5, lower=faster)")
 
     args = parser.parse_args()
 
@@ -249,25 +388,29 @@ Iterations: {args.iterations}
 
     # Step 1: Extract frames
     if not args.skip_frames:
-        _, timings['frame_extraction'] = extract_frames(video_path, work_dir, args.fps)
+        _, timings['frame_extraction'] = extract_frames(video_path, work_dir, args.fps,
+                                                        oversample=args.oversample)
     else:
         print("[SKIP] Frame extraction (using existing frames)")
         timings['frame_extraction'] = 0
 
     # Step 2: Run COLMAP
     if not args.skip_colmap:
-        _, colmap_timings = run_colmap(work_dir, use_gpu=not args.no_gpu)
+        _, colmap_timings = run_colmap(work_dir, use_gpu=not args.no_gpu,
+                                       use_colmap_mapper=args.use_colmap,
+                                       match_overlap=args.match_overlap)
         timings['undistortion'] = undistort_images(work_dir)
         timings.update(colmap_timings)
     else:
         print("[SKIP] COLMAP (using existing camera poses)")
         timings['feature_extraction'] = 0
         timings['feature_matching'] = 0
-        timings['sparse_reconstruction'] = 0
+        timings['sfm_reconstruction'] = 0
         timings['undistortion'] = 0
 
     # Step 3: Train 3DGS
-    timings['training'] = train_gaussian_splatting(work_dir, model_dir, args.iterations)
+    timings['training'] = train_gaussian_splatting(work_dir, model_dir, args.iterations,
+                                                   resolution=args.resolution)
 
     total_time = time.time() - pipeline_start
 
@@ -286,10 +429,10 @@ Output files:
 TIMING SUMMARY
 {'='*60}
 Frame Extraction:        {timings['frame_extraction']:8.2f}s ({timings['frame_extraction']/60:6.2f}m)
-COLMAP Feature Extract:  {timings['feature_extraction']:8.2f}s ({timings['feature_extraction']/60:6.2f}m)
-COLMAP Feature Matching: {timings['feature_matching']:8.2f}s ({timings['feature_matching']/60:6.2f}m)
-COLMAP Reconstruction:   {timings['sparse_reconstruction']:8.2f}s ({timings['sparse_reconstruction']/60:6.2f}m)
-COLMAP Undistortion:     {timings['undistortion']:8.2f}s ({timings['undistortion']/60:6.2f}m)
+Feature Extraction:      {timings['feature_extraction']:8.2f}s ({timings['feature_extraction']/60:6.2f}m)
+Feature Matching:        {timings['feature_matching']:8.2f}s ({timings['feature_matching']/60:6.2f}m)
+SfM Reconstruction:      {timings['sfm_reconstruction']:8.2f}s ({timings['sfm_reconstruction']/60:6.2f}m)
+Image Undistortion:      {timings['undistortion']:8.2f}s ({timings['undistortion']/60:6.2f}m)
 3DGS Training:           {timings['training']:8.2f}s ({timings['training']/60:6.2f}m)
 {'='*60}
 TOTAL TIME:              {total_time:8.2f}s ({total_time/60:6.2f}m)
