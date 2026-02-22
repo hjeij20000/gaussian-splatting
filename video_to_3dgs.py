@@ -294,21 +294,20 @@ def undistort_images(project_dir: Path):
 
 
 def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: int = 30000,
-                             resolution: int = -1):
-    """Train the 3D Gaussian Splatting model."""
+                             max_resolution: int = 1920):
+    """Train the 3D Gaussian Splatting model using Brush."""
 
-    script_dir = Path(__file__).parent
-    train_script = script_dir / "train.py"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        sys.executable, str(train_script),
-        "-s", str(project_dir),
-        "-m", str(output_dir),
-        "--iterations", str(iterations),
+        "brush", str(project_dir),
+        "--total-steps", str(iterations),
+        "--max-resolution", str(max_resolution),
+        "--export-path", str(output_dir),
+        "--export-name", "export_{iter}.ply",
+        "--export-every", str(iterations),
     ]
-    if resolution > 0:
-        cmd += ["-r", str(resolution)]
-    elapsed = run_command(cmd, f"Training 3DGS model ({iterations} iterations)", cwd=script_dir)
+    elapsed = run_command(cmd, f"Training 3DGS model with Brush ({iterations} steps)")
     return elapsed
 
 
@@ -345,8 +344,8 @@ Examples:
                         help="Disable GPU for COLMAP")
     parser.add_argument("--use-colmap", action="store_true",
                         help="Use COLMAP mapper instead of FastMap for SfM")
-    parser.add_argument("--resolution", "-r", type=int, default=-1,
-                        help="Resolution for 3DGS training (e.g. 2 for half, 4 for quarter)")
+    parser.add_argument("--max-resolution", type=int, default=1920,
+                        help="Max image resolution for Brush training in pixels (default: 1920)")
     parser.add_argument("--oversample", type=int, default=3,
                         help="Extract N x FPS frames, keep sharpest per window (default: 3)")
     parser.add_argument("--match-overlap", type=int, default=5,
@@ -410,7 +409,7 @@ Iterations: {args.iterations}
 
     # Step 3: Train 3DGS
     timings['training'] = train_gaussian_splatting(work_dir, model_dir, args.iterations,
-                                                   resolution=args.resolution)
+                                                   max_resolution=args.max_resolution)
 
     total_time = time.time() - pipeline_start
 
@@ -422,8 +421,7 @@ Pipeline Complete!
 Model saved to: {model_dir}
 
 Output files:
-  - {model_dir}/point_cloud/iteration_{args.iterations}/point_cloud.ply
-  - {model_dir}/cameras.json
+  - {model_dir}/export_{args.iterations}.ply
 
 {'='*60}
 TIMING SUMMARY
@@ -438,11 +436,8 @@ Image Undistortion:      {timings['undistortion']:8.2f}s ({timings['undistortion
 TOTAL TIME:              {total_time:8.2f}s ({total_time/60:6.2f}m)
 {'='*60}
 
-To view the model, use the SIBR viewer:
-  ./SIBR_viewers/install/bin/SIBR_gaussianViewer_app -m {model_dir}
-
-To render images:
-  python render.py -m {model_dir}
+To view the model:
+  brush {model_dir}/export_{args.iterations}.ply --with-viewer
 {'='*60}
     """)
 
