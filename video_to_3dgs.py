@@ -166,11 +166,14 @@ def _wrap_colmap_cmd(cmd):
     return cmd
 
 
-def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool = False, match_overlap: int = 5):
-    """Run COLMAP feature extraction/matching + SfM reconstruction.
+def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool = False,
+               match_overlap: int = 5, sfm_backend: str = 'fastmap'):
+    """Run SfM to produce a COLMAP-format sparse reconstruction.
 
-    By default, uses FastMap for the SfM step (mapper). Pass use_colmap_mapper=True
-    to fall back to the original COLMAP mapper.
+    sfm_backend choices:
+      'fastmap'  – COLMAP SIFT features + FastMap mapper (default)
+      'colmap'   – COLMAP SIFT features + COLMAP incremental mapper
+      'mast3r'   – MASt3R deep features + pycolmap incremental mapper (best quality)
     """
 
     input_dir = project_dir / "input"
@@ -183,77 +186,91 @@ def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool 
 
     gpu_flag = "1" if use_gpu else "0"
 
-    # FastMap only supports SIMPLE_RADIAL; COLMAP mapper handles OPENCV fine.
-    camera_model = "OPENCV" if use_colmap_mapper else "SIMPLE_RADIAL"
-
     timings = {}
 
-    # Feature extraction (COLMAP)
-    cmd = _wrap_colmap_cmd([
-        "colmap", "feature_extractor",
-        "--database_path", str(database_path),
-        "--image_path", str(input_dir),
-        "--ImageReader.single_camera", "1",
-        "--ImageReader.camera_model", camera_model,
-        "--SiftExtraction.use_gpu", gpu_flag,
-    ])
-    timings['feature_extraction'] = run_command(cmd, "COLMAP feature extraction")
+    if sfm_backend == 'mast3r':
+        # ── MASt3R: deep feature matching + pycolmap mapper ─────────────────
+        # Skips COLMAP SIFT entirely. Outputs COLMAP binary format directly.
+        mast3r_script = Path(__file__).parent / 'mast3r_sfm.py'
+        sparse_0 = sparse_dir / '0'
+        sparse_0.mkdir(parents=True, exist_ok=True)
+        cache_dir = distorted_dir / 'mast3r_cache'
+        cmd = [
+            sys.executable, str(mast3r_script),
+            '--images', str(input_dir),
+            '--output', str(sparse_0),
+            '--cache-dir', str(cache_dir),
+        ]
+        timings['feature_extraction'] = 0
+        timings['feature_matching'] = 0
+        timings['sfm_reconstruction'] = run_command(cmd, "MASt3R-SfM (deep matching + pycolmap)")
+        print(f"[INFO] MASt3R reconstruction saved to {sparse_0}")
 
-    # Feature matching (COLMAP)
-    cmd = _wrap_colmap_cmd([
-        "colmap", "sequential_matcher",
-        "--database_path", str(database_path),
-        "--SiftMatching.use_gpu", gpu_flag,
-        "--SequentialMatching.overlap", str(match_overlap),
-    ])
-    timings['feature_matching'] = run_command(cmd, "COLMAP sequential feature matching")
+    else:
+        # ── COLMAP SIFT feature extraction ──────────────────────────────────
+        # FastMap only supports SIMPLE_RADIAL; COLMAP mapper handles OPENCV fine.
+        camera_model = "OPENCV" if use_colmap_mapper else "SIMPLE_RADIAL"
 
-    # Sparse reconstruction (Structure from Motion)
-    if use_colmap_mapper:
         cmd = _wrap_colmap_cmd([
-            "colmap", "mapper",
+            "colmap", "feature_extractor",
             "--database_path", str(database_path),
             "--image_path", str(input_dir),
-            "--output_path", str(sparse_dir),
+            "--ImageReader.single_camera", "1",
+            "--ImageReader.camera_model", camera_model,
+            "--SiftExtraction.use_gpu", gpu_flag,
         ])
-        timings['sfm_reconstruction'] = run_command(cmd, "COLMAP sparse reconstruction (mapper)")
-    else:
-        # FastMap refuses to write to an existing directory, so use a temp dir
-        # and move the sparse output into the expected location.
-        fastmap_out = distorted_dir / "fastmap_out"
-        if fastmap_out.exists():
-            shutil.rmtree(fastmap_out)
-        cmd = [
-            sys.executable, str(FASTMAP_DIR / "run.py"),
-            "--database", str(database_path),
-            "--image_dir", str(input_dir),
-            "--output_dir", str(fastmap_out),
-            "--headless",
-        ]
-        timings['sfm_reconstruction'] = run_command(cmd, "FastMap sparse reconstruction")
-        # Move sparse/0/ into distorted/sparse/0/
-        src_sparse = fastmap_out / "sparse" / "0"
-        dst_sparse = sparse_dir / "0"
-        if dst_sparse.exists():
-            shutil.rmtree(dst_sparse)
-        shutil.copytree(str(src_sparse), str(dst_sparse))
-        shutil.rmtree(fastmap_out)
-        print(f"[INFO] Moved FastMap output to {dst_sparse}")
+        timings['feature_extraction'] = run_command(cmd, "COLMAP feature extraction")
 
-    # Check if reconstruction succeeded
+        # Feature matching
+        cmd = _wrap_colmap_cmd([
+            "colmap", "sequential_matcher",
+            "--database_path", str(database_path),
+            "--SiftMatching.use_gpu", gpu_flag,
+            "--SequentialMatching.overlap", str(match_overlap),
+        ])
+        timings['feature_matching'] = run_command(cmd, "COLMAP sequential feature matching")
+
+        # Sparse reconstruction (Structure from Motion)
+        if sfm_backend == 'colmap' or use_colmap_mapper:
+            cmd = _wrap_colmap_cmd([
+                "colmap", "mapper",
+                "--database_path", str(database_path),
+                "--image_path", str(input_dir),
+                "--output_path", str(sparse_dir),
+            ])
+            timings['sfm_reconstruction'] = run_command(cmd, "COLMAP sparse reconstruction (mapper)")
+        else:
+            # FastMap: refuses to write to existing dir, use temp then move
+            fastmap_out = distorted_dir / "fastmap_out"
+            if fastmap_out.exists():
+                shutil.rmtree(fastmap_out)
+            cmd = [
+                sys.executable, str(FASTMAP_DIR / "run.py"),
+                "--database", str(database_path),
+                "--image_dir", str(input_dir),
+                "--output_dir", str(fastmap_out),
+                "--headless",
+            ]
+            timings['sfm_reconstruction'] = run_command(cmd, "FastMap sparse reconstruction")
+            src_sparse = fastmap_out / "sparse" / "0"
+            dst_sparse = sparse_dir / "0"
+            if dst_sparse.exists():
+                shutil.rmtree(dst_sparse)
+            shutil.copytree(str(src_sparse), str(dst_sparse))
+            shutil.rmtree(fastmap_out)
+            print(f"[INFO] Moved FastMap output to {dst_sparse}")
+
+    # Check reconstruction succeeded
     model_dirs = list(sparse_dir.glob("*"))
     if not model_dirs:
         print("[ERROR] SfM failed to reconstruct any model")
         sys.exit(1)
 
-    # Use the largest model (most images registered)
     model_path = sparse_dir / "0"
     if not model_path.exists():
         model_path = model_dirs[0]
 
-    sfm_tool = "COLMAP" if use_colmap_mapper else "FastMap"
-    print(f"[INFO] Using {sfm_tool} model: {model_path}")
-
+    print(f"[INFO] Using {sfm_backend} model: {model_path}")
     return model_path, timings
 
 
@@ -343,7 +360,10 @@ Examples:
     parser.add_argument("--no-gpu", action="store_true",
                         help="Disable GPU for COLMAP")
     parser.add_argument("--use-colmap", action="store_true",
-                        help="Use COLMAP mapper instead of FastMap for SfM")
+                        help="Use COLMAP mapper instead of FastMap for SfM (ignored if --sfm-backend is set)")
+    parser.add_argument("--sfm-backend", type=str, default='fastmap',
+                        choices=['fastmap', 'colmap', 'mast3r'],
+                        help="SfM backend: fastmap (default), colmap, or mast3r (best quality)")
     parser.add_argument("--max-resolution", type=int, default=1920,
                         help="Max image resolution for Brush training in pixels (default: 1920)")
     parser.add_argument("--oversample", type=int, default=3,
@@ -378,6 +398,7 @@ Video:      {video_path}
 Output:     {output_dir}
 FPS:        {args.fps}
 Iterations: {args.iterations}
+SfM backend:{sfm_backend}
 {'='*60}
     """)
 
@@ -393,11 +414,16 @@ Iterations: {args.iterations}
         print("[SKIP] Frame extraction (using existing frames)")
         timings['frame_extraction'] = 0
 
-    # Step 2: Run COLMAP
+    # Step 2: Run SfM
+    sfm_backend = args.sfm_backend
+    if args.use_colmap and sfm_backend == 'fastmap':
+        sfm_backend = 'colmap'  # backwards-compat with old --use-colmap flag
+
     if not args.skip_colmap:
         _, colmap_timings = run_colmap(work_dir, use_gpu=not args.no_gpu,
-                                       use_colmap_mapper=args.use_colmap,
-                                       match_overlap=args.match_overlap)
+                                       use_colmap_mapper=(sfm_backend == 'colmap'),
+                                       match_overlap=args.match_overlap,
+                                       sfm_backend=sfm_backend)
         timings['undistortion'] = undistort_images(work_dir)
         timings.update(colmap_timings)
     else:
