@@ -44,16 +44,13 @@ def run_hloc_sfm(image_dir: Path, output_dir: Path,
 
     # ── 1. Extract SuperPoint features ─────────────────────────────────────
     print("[hloc] Extracting SuperPoint features...")
-    features_path = work_dir / 'features.h5'
+    feat_conf = extract_features.confs[feature_conf]
+    features_name = feat_conf['output']  # e.g. 'feats-superpoint-n4096-r1024'
     extract_features.main(
-        conf=extract_features.confs[feature_conf],
+        conf=feat_conf,
         image_dir=image_dir,
         export_dir=work_dir,
     )
-    # hloc names the file after the conf key
-    candidate = work_dir / f'{feature_conf}.h5'
-    if candidate.exists() and not features_path.exists():
-        features_path = candidate
 
     # ── 2. Create sequential pairs ──────────────────────────────────────────
     print(f"[hloc] Creating sequential pairs (overlap={match_overlap})...")
@@ -70,18 +67,15 @@ def run_hloc_sfm(image_dir: Path, output_dir: Path,
     print(f"[hloc] {len(image_names)} images → {sum(1 for _ in open(pairs_path))} pairs")
 
     # ── 3. Match with LightGlue ─────────────────────────────────────────────
+    # Pass features as a name string so hloc auto-constructs both h5 paths.
     print("[hloc] Matching features with LightGlue...")
-    match_features.main(
+    matches_path = match_features.main(
         conf=match_features.confs[matcher_conf],
         pairs=pairs_path,
-        features=features_path,
+        features=features_name,
         export_dir=work_dir,
     )
-    matches_path = work_dir / f'{matcher_conf}.h5'
-    # fallback name
-    if not matches_path.exists():
-        candidates = list(work_dir.glob('*.h5'))
-        matches_path = next((p for p in candidates if 'match' in p.name), candidates[-1])
+    features_path = work_dir / f'{features_name}.h5'
 
     # ── 4. COLMAP reconstruction ────────────────────────────────────────────
     print("[hloc] Running COLMAP incremental reconstruction...")
