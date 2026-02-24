@@ -1,17 +1,16 @@
 # =============================================================================
-# Video-to-3DGS Pipeline — Docker Image
-# Includes: MASt3R-SfM, FastMap, COLMAP, Brush trainer, ffmpeg
+# Video-to-3DGS Pipeline — RunPod Serverless Docker Image
+# Includes: MASt3R-SfM, GLOMAP, COLMAP, Brush trainer, ffmpeg
 #
 # GPU support:
 #   CUDA (MASt3R/PyTorch): Pascal 6.1 → Blackwell 10.0  (all NVIDIA generations)
 #   Vulkan (Brush):         NVIDIA / AMD / Intel          (any Vulkan 1.1+ GPU)
 #
 # Build (from /home/ibrahim — the parent of gaussian-splatting/):
-#   docker build -f gaussian-splatting/Dockerfile -t video-to-3dgs .
+#   docker build -f gaussian-splatting/Dockerfile -t hjeij2000/video-to-3dgs:serverless .
 #
-# Run:
-#   docker run --gpus all -v /path/to/data:/data video-to-3dgs \
-#       --video /data/video.mp4 --output /data/output --sfm-backend mast3r
+# RunPod serverless env vars required:
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_BUCKET, AWS_S3_REGION
 # =============================================================================
 
 
@@ -116,11 +115,19 @@ RUN pip3 install --no-cache-dir \
         plyfile lpips scipy tqdm \
         joblib numpy loguru dacite \
         pyyaml prettytable psutil \
-        matplotlib
+        matplotlib \
+        # Serverless handler deps
+        runpod \
+        gdown \
+        boto3
 
 # ── Brush 0.3.0 binary (Vulkan/wgpu — GPU-vendor agnostic) ─────────────────
 COPY brush-app-x86_64-unknown-linux-gnu/brush_app /usr/local/bin/brush
 RUN chmod +x /usr/local/bin/brush
+
+# ── GLOMAP binary (compiled from source on host) ────────────────────────────
+COPY local/bin/glomap /usr/local/bin/glomap
+RUN chmod +x /usr/local/bin/glomap
 
 # ── Pipeline source files ───────────────────────────────────────────────────
 COPY gaussian-splatting/submodules     /app/gaussian-splatting/submodules
@@ -137,6 +144,7 @@ COPY gaussian-splatting/train.py \
      gaussian-splatting/metrics.py \
      gaussian-splatting/video_to_3dgs.py \
      gaussian-splatting/mast3r_sfm.py \
+     gaussian-splatting/handler.py \
      gaussian-splatting/run_pipeline.sh \
      gaussian-splatting/start.sh \
      /app/gaussian-splatting/
@@ -150,11 +158,24 @@ RUN sed -i \
     's|FASTMAP_DIR = Path("/home/ibrahim/fastmap")|FASTMAP_DIR = Path("/app/fastmap")|' \
     /app/gaussian-splatting/video_to_3dgs.py
 
-# MAST3R_DIR is already correct: Path(__file__).parent.parent / 'mast3r'
-# = /app/gaussian-splatting/../../mast3r ... no wait, let's be explicit:
+RUN sed -i \
+    "s|'--glomap-bin', '/home/ibrahim/local/bin/glomap'|'--glomap-bin', '/usr/local/bin/glomap'|" \
+    /app/gaussian-splatting/video_to_3dgs.py
+
 RUN sed -i \
     "s|MAST3R_DIR = Path(__file__).parent.parent / 'mast3r'|MAST3R_DIR = Path('/app/mast3r')|" \
     /app/gaussian-splatting/mast3r_sfm.py
+
+RUN sed -i \
+    "s|default='/home/ibrahim/local/bin/glomap'|default='/usr/local/bin/glomap'|g" \
+    /app/gaussian-splatting/mast3r_sfm.py
+
+# ── Pre-download MASt3R weights (baked into image to avoid cold-start delay) ─
+RUN PYTHONPATH=/app/mast3r:/app/mast3r/dust3r:/app/mast3r/dust3r/dust3r_visloc \
+    python3 -c "\
+from mast3r.model import AsymmetricMASt3R; \
+AsymmetricMASt3R.from_pretrained('naver/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric'); \
+print('[build] MASt3R weights cached.')"
 
 # ── Workspace (RunPod mounts persistent storage here) ──────────────────────
 RUN mkdir -p /workspace
@@ -166,5 +187,4 @@ EXPOSE 22
 # ── Entrypoint ─────────────────────────────────────────────────────────────
 WORKDIR /app/gaussian-splatting
 
-# start.sh: sets up SSH, optionally auto-runs pipeline, then sleeps forever
-ENTRYPOINT ["/app/gaussian-splatting/start.sh"]
+ENTRYPOINT ["python3", "/app/gaussian-splatting/handler.py"]

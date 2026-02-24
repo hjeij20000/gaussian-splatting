@@ -123,6 +123,8 @@ def extract_frames(video_path: Path, output_dir: Path, fps: int = 2,
 
     cmd = [
         "ffmpeg", "-y",
+        "-hwaccel", "cuda",
+        "-c:v", "hevc_cuvid",
         "-i", str(video_path),
         "-vf", f"fps={extract_fps}",
         "-q:v", "1",
@@ -167,7 +169,7 @@ def _wrap_colmap_cmd(cmd):
 
 
 def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool = False,
-               match_overlap: int = 5, sfm_backend: str = 'fastmap'):
+               match_overlap: int = 5, sfm_backend: str = 'fastmap', window_size: int = 10):
     """Run SfM to produce a COLMAP-format sparse reconstruction.
 
     sfm_backend choices:
@@ -200,10 +202,13 @@ def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool 
             '--images', str(input_dir),
             '--output', str(sparse_0),
             '--cache-dir', str(cache_dir),
+            '--mapper', 'glomap',
+            '--glomap-bin', '/home/ibrahim/local/bin/glomap',
+            '--window-size', str(window_size),
         ]
         timings['feature_extraction'] = 0
         timings['feature_matching'] = 0
-        timings['sfm_reconstruction'] = run_command(cmd, "MASt3R-SfM (deep matching + pycolmap)")
+        timings['sfm_reconstruction'] = run_command(cmd, "MASt3R-SfM (deep matching + GLOMAP)")
         print(f"[INFO] MASt3R reconstruction saved to {sparse_0}")
 
     else:
@@ -370,11 +375,17 @@ Examples:
                         help="Extract N x FPS frames, keep sharpest per window (default: 3)")
     parser.add_argument("--match-overlap", type=int, default=5,
                         help="COLMAP sequential matching overlap (default: 5, lower=faster)")
+    parser.add_argument("--window-size", type=int, default=10,
+                        help="MASt3R sliding window size for pair creation (default: 10)")
 
     args = parser.parse_args()
 
     video_path = Path(args.video).resolve()
     output_dir = Path(args.output).resolve()
+
+    sfm_backend = args.sfm_backend
+    if args.use_colmap and sfm_backend == 'fastmap':
+        sfm_backend = 'colmap'
 
     if not video_path.exists() and not args.skip_frames:
         print(f"[ERROR] Video file not found: {video_path}")
@@ -415,15 +426,12 @@ SfM backend:{sfm_backend}
         timings['frame_extraction'] = 0
 
     # Step 2: Run SfM
-    sfm_backend = args.sfm_backend
-    if args.use_colmap and sfm_backend == 'fastmap':
-        sfm_backend = 'colmap'  # backwards-compat with old --use-colmap flag
-
     if not args.skip_colmap:
         _, colmap_timings = run_colmap(work_dir, use_gpu=not args.no_gpu,
                                        use_colmap_mapper=(sfm_backend == 'colmap'),
                                        match_overlap=args.match_overlap,
-                                       sfm_backend=sfm_backend)
+                                       sfm_backend=sfm_backend,
+                                       window_size=args.window_size)
         timings['undistortion'] = undistort_images(work_dir)
         timings.update(colmap_timings)
     else:

@@ -3,13 +3,14 @@
 MASt3R-SfM: Replace COLMAP feature extraction + matching + FastMap/COLMAP mapper.
 
 Pipeline:
-  images/ → MASt3R deep matching → pycolmap incremental mapping → sparse/0/ (COLMAP binary)
+  images/ → MASt3R deep matching → GLOMAP global mapping → sparse/0/ (COLMAP binary)
 
 The output (cameras.bin, images.bin, points3D.bin) is compatible with
 'colmap image_undistorter' and Brush training.
 
 Usage:
     python mast3r_sfm.py --images /path/to/images --output /path/to/sparse/0
+    python mast3r_sfm.py --images /path/to/images --output /path/to/sparse/0 --mapper pycolmap
 """
 
 import os
@@ -28,7 +29,8 @@ sys.path.insert(0, str(MAST3R_DIR / 'dust3r' / 'dust3r_visloc'))
 
 def run_sfm(image_dir: Path, output_dir: Path, model_name: str, device: str,
             image_size: int, window_size: int, shared_intrinsics: bool,
-            conf_thr: float, pixel_tol: int, cache_dir: Path = None):
+            conf_thr: float, pixel_tol: int, cache_dir: Path = None,
+            mapper: str = 'glomap', glomap_bin: str = '/home/ibrahim/local/bin/glomap'):
 
     import torch
     import pycolmap
@@ -38,7 +40,8 @@ def run_sfm(image_dir: Path, output_dir: Path, model_name: str, device: str,
     from mast3r.model import AsymmetricMASt3R
     from mast3r.image_pairs import make_pairs
     from mast3r.colmap.mapping import (kapture_import_image_folder_or_list,
-                                       run_mast3r_matching, pycolmap_run_mapper)
+                                       run_mast3r_matching, pycolmap_run_mapper,
+                                       glomap_run_mapper)
     from dust3r.utils.image import load_images
 
     torch.backends.cuda.matmul.allow_tf32 = True  # Ampere+ speedup
@@ -118,27 +121,33 @@ def run_sfm(image_dir: Path, output_dir: Path, model_name: str, device: str,
             f.write(f"{p1} {p2}\n")
     pycolmap.verify_matches(colmap_db_path, pairs_txt)
 
-    # ── 7. Incremental mapping (pycolmap) ───────────────────────────────────
+    # ── 7. Mapping ───────────────────────────────────────────────────────────
     recon_path = str(work_dir / 'reconstruction')
     if os.path.isdir(recon_path):
         shutil.rmtree(recon_path)
     os.makedirs(recon_path)
 
-    print("[MASt3R] Running pycolmap incremental mapping...")
-    pycolmap_run_mapper(colmap_db_path, recon_path, root_path)
+    if mapper == 'glomap':
+        print(f"[MASt3R] Running GLOMAP global mapping (binary: {glomap_bin})...")
+        glomap_run_mapper(glomap_bin, colmap_db_path, recon_path, root_path)
+        # GLOMAP writes directly to recon_path/0
+        recon_model_path = Path(recon_path) / '0'
+        if not recon_model_path.exists():
+            raise RuntimeError("GLOMAP produced no reconstruction — check matches")
+        recon = pycolmap.Reconstruction(str(recon_model_path))
+    else:
+        print("[MASt3R] Running pycolmap incremental mapping...")
+        pycolmap_run_mapper(colmap_db_path, recon_path, root_path)
+        model_dirs = [d for d in Path(recon_path).iterdir() if d.is_dir()]
+        if not model_dirs:
+            raise RuntimeError("pycolmap mapper produced no reconstruction — check matches")
+        recon_model_path = max(model_dirs, key=lambda d: pycolmap.Reconstruction(str(d)).num_reg_images())
+        recon = pycolmap.Reconstruction(str(recon_model_path))
 
-    # ── 8. Copy best model to output ────────────────────────────────────────
-    model_dirs = [d for d in Path(recon_path).iterdir() if d.is_dir()]
-    if not model_dirs:
-        raise RuntimeError("pycolmap mapper produced no reconstruction — check matches")
-
-    # Pick the model that registered the most images
-    best = max(model_dirs, key=lambda d: pycolmap.Reconstruction(str(d)).num_reg_images())
-    recon = pycolmap.Reconstruction(str(best))
     print(f"[MASt3R] {recon.summary()}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    for f in best.iterdir():
+    for f in recon_model_path.iterdir():
         shutil.copy(f, output_dir / f.name)
 
     print(f"[MASt3R] Reconstruction saved to {output_dir}")
@@ -167,6 +176,10 @@ def main():
                         help='Pixel tolerance for match filtering (default: 5)')
     parser.add_argument('--cache-dir', type=str, default=None,
                         help='Directory for intermediate files (default: system temp)')
+    parser.add_argument('--mapper', type=str, default='glomap', choices=['glomap', 'pycolmap'],
+                        help='SfM mapper backend: glomap (default, faster) or pycolmap (incremental)')
+    parser.add_argument('--glomap-bin', type=str, default='/home/ibrahim/local/bin/glomap',
+                        help='Path to glomap binary (default: /home/ibrahim/local/bin/glomap)')
 
     args = parser.parse_args()
 
@@ -182,6 +195,8 @@ def main():
         conf_thr=args.conf_thr,
         pixel_tol=args.pixel_tol,
         cache_dir=cache,
+        mapper=args.mapper,
+        glomap_bin=args.glomap_bin,
     )
 
 
