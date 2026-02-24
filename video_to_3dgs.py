@@ -357,19 +357,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Basic usage
+    # Basic usage with video
     python video_to_3dgs.py --video my_video.mp4 --output ./my_3dgs
 
-    # Extract more frames (higher quality, slower)
-    python video_to_3dgs.py --video my_video.mp4 --output ./my_3dgs --fps 5
+    # Use pre-extracted frames directly (skips video decoding)
+    python video_to_3dgs.py --frames-dir /path/to/frames/ --output ./my_3dgs --sfm-backend hloc
 
     # Quick training (lower quality, faster)
     python video_to_3dgs.py --video my_video.mp4 --output ./my_3dgs --iterations 7000
         """
     )
 
-    parser.add_argument("--video", "-v", type=str, required=True,
+    parser.add_argument("--video", "-v", type=str, default=None,
                         help="Path to input video file")
+    parser.add_argument("--frames-dir", type=str, default=None,
+                        help="Path to directory of pre-extracted frames (skips video extraction)")
     parser.add_argument("--output", "-o", type=str, required=True,
                         help="Path to output directory")
     parser.add_argument("--fps", type=int, default=2,
@@ -399,15 +401,26 @@ Examples:
 
     args = parser.parse_args()
 
-    video_path = Path(args.video).resolve()
     output_dir = Path(args.output).resolve()
 
     sfm_backend = args.sfm_backend
     if args.use_colmap and sfm_backend == 'fastmap':
         sfm_backend = 'colmap'
 
-    if not video_path.exists() and not args.skip_frames:
+    # Validate inputs
+    if args.frames_dir is None and args.video is None and not args.skip_frames:
+        print("[ERROR] Provide either --video or --frames-dir")
+        sys.exit(1)
+
+    video_path = Path(args.video).resolve() if args.video else None
+    frames_dir = Path(args.frames_dir).resolve() if args.frames_dir else None
+
+    if video_path and not video_path.exists() and not args.skip_frames:
         print(f"[ERROR] Video file not found: {video_path}")
+        sys.exit(1)
+
+    if frames_dir and not frames_dir.exists():
+        print(f"[ERROR] Frames directory not found: {frames_dir}")
         sys.exit(1)
 
     # Create output directory
@@ -420,11 +433,12 @@ Examples:
     # Model output directory
     model_dir = output_dir / "model"
 
+    input_label = str(frames_dir) if frames_dir else str(video_path)
     print(f"""
 {'='*60}
 Video to 3D Gaussian Splatting Pipeline
 {'='*60}
-Video:      {video_path}
+Input:      {input_label}
 Output:     {output_dir}
 FPS:        {args.fps}
 Iterations: {args.iterations}
@@ -436,8 +450,17 @@ SfM backend:{sfm_backend}
     timings = {}
     pipeline_start = time.time()
 
-    # Step 1: Extract frames
-    if not args.skip_frames:
+    # Step 1: Extract / import frames
+    if frames_dir:
+        # Copy frames from provided directory into workspace input/
+        input_dir = work_dir / "input"
+        if input_dir.exists():
+            shutil.rmtree(input_dir)
+        shutil.copytree(str(frames_dir), str(input_dir))
+        frame_count = len(list(input_dir.glob("*.jpg"))) + len(list(input_dir.glob("*.png")))
+        print(f"\n[INFO] Copied {frame_count} frames from {frames_dir} → {input_dir}")
+        timings['frame_extraction'] = 0
+    elif not args.skip_frames:
         _, timings['frame_extraction'] = extract_frames(video_path, work_dir, args.fps,
                                                         oversample=args.oversample)
     else:

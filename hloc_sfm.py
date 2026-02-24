@@ -46,18 +46,19 @@ def run_hloc_sfm(image_dir: Path, output_dir: Path,
     print("[hloc] Extracting SuperPoint features...")
     feat_conf = extract_features.confs[feature_conf]
     features_name = feat_conf['output']  # e.g. 'feats-superpoint-n4096-r1024'
-    extract_features.main(
+    features_path = extract_features.main(
         conf=feat_conf,
         image_dir=image_dir,
         export_dir=work_dir,
     )
 
+    # Use h5 keys as ground truth for image names (handles jpg/png/etc uniformly)
+    from hloc.utils.io import list_h5_names
+    image_names = sorted(list_h5_names(features_path))
+
     # ── 2. Create sequential pairs ──────────────────────────────────────────
     print(f"[hloc] Creating sequential pairs (overlap={match_overlap})...")
     pairs_path = work_dir / 'pairs.txt'
-    image_names = sorted([p.name for p in image_dir.glob('*.jpg')])
-    if not image_names:
-        image_names = sorted([p.name for p in image_dir.glob('*.png')])
 
     with open(pairs_path, 'w') as f:
         for i, name in enumerate(image_names):
@@ -75,7 +76,6 @@ def run_hloc_sfm(image_dir: Path, output_dir: Path,
         features=features_name,
         export_dir=work_dir,
     )
-    features_path = work_dir / f'{features_name}.h5'
 
     # ── 4. COLMAP reconstruction ────────────────────────────────────────────
     print("[hloc] Running COLMAP incremental reconstruction...")
@@ -85,7 +85,8 @@ def run_hloc_sfm(image_dir: Path, output_dir: Path,
         pairs=pairs_path,
         features=features_path,
         matches=matches_path,
-        camera_mode=pycolmap.CameraMode.SINGLE,
+        camera_mode=pycolmap.CameraMode.AUTO,
+        image_list=image_names,
     )
 
     if recon is None or len(recon.images) == 0:
