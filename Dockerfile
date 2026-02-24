@@ -79,11 +79,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         mesa-vulkan-drivers \
         # Headless display for COLMAP feature matching
         xvfb \
+        # SSH (required by RunPod for interactive pod access)
+        openssh-server \
         # Misc
         git wget curl ca-certificates \
     && ln -sf /usr/bin/python3.10 /usr/bin/python3 \
     && ln -sf /usr/bin/python3.10 /usr/bin/python \
     && python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+    # Configure SSH: allow root login, no password auth
+    && mkdir -p /run/sshd \
+    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Copy compiled Python packages from builder ─────────────────────────────
@@ -132,7 +138,10 @@ COPY gaussian-splatting/train.py \
      gaussian-splatting/video_to_3dgs.py \
      gaussian-splatting/mast3r_sfm.py \
      gaussian-splatting/run_pipeline.sh \
+     gaussian-splatting/start.sh \
      /app/gaussian-splatting/
+
+RUN chmod +x /app/gaussian-splatting/start.sh
 
 COPY fastmap /app/fastmap
 
@@ -147,12 +156,15 @@ RUN sed -i \
     "s|MAST3R_DIR = Path(__file__).parent.parent / 'mast3r'|MAST3R_DIR = Path('/app/mast3r')|" \
     /app/gaussian-splatting/mast3r_sfm.py
 
-# ── Data directory ─────────────────────────────────────────────────────────
-RUN mkdir -p /data
-VOLUME ["/data"]
+# ── Workspace (RunPod mounts persistent storage here) ──────────────────────
+RUN mkdir -p /workspace
+VOLUME ["/workspace"]
+
+# ── Expose SSH port ────────────────────────────────────────────────────────
+EXPOSE 22
 
 # ── Entrypoint ─────────────────────────────────────────────────────────────
 WORKDIR /app/gaussian-splatting
 
-ENTRYPOINT ["python3", "video_to_3dgs.py"]
-CMD ["--help"]
+# start.sh: sets up SSH, optionally auto-runs pipeline, then sleeps forever
+ENTRYPOINT ["/app/gaussian-splatting/start.sh"]
