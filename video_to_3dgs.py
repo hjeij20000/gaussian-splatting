@@ -152,6 +152,7 @@ def extract_frames(video_path: Path, output_dir: Path, fps: int = 2,
 
 
 FASTMAP_DIR = Path("/home/ibrahim/fastmap")
+HLOC_DIR = Path("/home/ibrahim/hloc")
 
 
 def _needs_xvfb():
@@ -191,7 +192,7 @@ def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool 
     timings = {}
 
     if sfm_backend == 'mast3r':
-        # ── MASt3R: deep feature matching + pycolmap mapper ─────────────────
+        # ── MASt3R: deep feature matching + GLOMAP mapper ───────────────────
         # Skips COLMAP SIFT entirely. Outputs COLMAP binary format directly.
         mast3r_script = Path(__file__).parent / 'mast3r_sfm.py'
         sparse_0 = sparse_dir / '0'
@@ -210,6 +211,23 @@ def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool 
         timings['feature_matching'] = 0
         timings['sfm_reconstruction'] = run_command(cmd, "MASt3R-SfM (deep matching + GLOMAP)")
         print(f"[INFO] MASt3R reconstruction saved to {sparse_0}")
+
+    elif sfm_backend == 'hloc':
+        # ── hloc: SuperPoint features + LightGlue matching + COLMAP mapper ──
+        # Better than SIFT for low-texture/metallic scenes, faster than MASt3R.
+        hloc_script = Path(__file__).parent / 'hloc_sfm.py'
+        sparse_0 = sparse_dir / '0'
+        sparse_0.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            sys.executable, str(hloc_script),
+            '--images', str(input_dir),
+            '--output', str(sparse_0),
+            '--match-overlap', str(match_overlap),
+        ]
+        timings['feature_extraction'] = 0
+        timings['feature_matching'] = 0
+        timings['sfm_reconstruction'] = run_command(cmd, "hloc SfM (SuperPoint + LightGlue + COLMAP)")
+        print(f"[INFO] hloc reconstruction saved to {sparse_0}")
 
     else:
         # ── COLMAP SIFT feature extraction ──────────────────────────────────
@@ -367,8 +385,9 @@ Examples:
     parser.add_argument("--use-colmap", action="store_true",
                         help="Use COLMAP mapper instead of FastMap for SfM (ignored if --sfm-backend is set)")
     parser.add_argument("--sfm-backend", type=str, default='fastmap',
-                        choices=['fastmap', 'colmap', 'mast3r'],
-                        help="SfM backend: fastmap (default), colmap, or mast3r (best quality)")
+                        choices=['fastmap', 'colmap', 'hloc', 'mast3r'],
+                        help="SfM backend: fastmap (default, fast/SIFT), colmap (reliable/SIFT), "
+                             "hloc (SuperPoint+LightGlue, good balance), mast3r (best quality, slowest)")
     parser.add_argument("--max-resolution", type=int, default=1920,
                         help="Max image resolution for Brush training in pixels (default: 1920)")
     parser.add_argument("--oversample", type=int, default=3,
