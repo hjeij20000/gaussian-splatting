@@ -144,6 +144,7 @@ COPY gaussian-splatting/train.py \
      gaussian-splatting/metrics.py \
      gaussian-splatting/video_to_3dgs.py \
      gaussian-splatting/mast3r_sfm.py \
+     gaussian-splatting/hloc_sfm.py \
      gaussian-splatting/handler.py \
      gaussian-splatting/run_pipeline.sh \
      gaussian-splatting/start.sh \
@@ -152,6 +153,13 @@ COPY gaussian-splatting/train.py \
 RUN chmod +x /app/gaussian-splatting/start.sh
 
 COPY fastmap /app/fastmap
+
+# ── hloc (SuperPoint + LightGlue) ─────────────────────────────────────────
+COPY hloc /app/hloc
+RUN pip3 install --no-cache-dir \
+        h5py \
+        kornia>=0.6.11 \
+        "lightglue @ git+https://github.com/cvg/LightGlue"
 
 # ── Fix hardcoded host paths ───────────────────────────────────────────────
 RUN sed -i \
@@ -169,6 +177,10 @@ RUN sed -i \
 RUN sed -i \
     "s|default='/home/ibrahim/local/bin/glomap'|default='/usr/local/bin/glomap'|g" \
     /app/gaussian-splatting/mast3r_sfm.py
+
+RUN sed -i \
+    "s|HLOC_DIR = Path(\"/home/ibrahim/hloc\")|HLOC_DIR = Path(\"/app/hloc\")|" \
+    /app/gaussian-splatting/hloc_sfm.py
 
 # ── Pre-download MASt3R weights (baked into image to avoid cold-start delay) ─
 RUN PYTHONPATH=/app/mast3r:/app/mast3r/dust3r:/app/mast3r/dust3r/dust3r_visloc \
