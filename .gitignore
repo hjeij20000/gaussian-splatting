@@ -1,5 +1,10 @@
 *.pyc
 .env
+LocalVSServerless/**/*.ply
+LocalVSServerless/**/model/
+LocalVSServerless/**/input/
+LocalVSServerless/**/distorted/
+LocalVSServerless/**/sparse/
 .vscode
 output
 build
