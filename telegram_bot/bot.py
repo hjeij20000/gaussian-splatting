@@ -354,7 +354,7 @@ async def handle_wizard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"✅ *All set! Submitting your job…*\n\n{session_summary(sess)}",
                 parse_mode="Markdown",
             )
-            asyncio.create_task(_run_job(query, sess.copy()))
+            ctx.application.create_task(_run_job(query, sess.copy()))
 
     except Exception as exc:
         logger.exception("Wizard error")
