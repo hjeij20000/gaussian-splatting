@@ -303,18 +303,52 @@ def handler(job):
         timings = parse_timings(stdout)
         print(format_timings_summary(timings))
 
-        # ── 6. Upload to S3 ──────────────────────────────────────────────────
-        runpod.serverless.progress_update(job, f"[6/6] Uploading PLY to S3... | {gpu_info}")
+        # ── 6. Write timings.txt ──────────────────────────────────────────────
+        from datetime import datetime
         job_id = job["id"]
+        rows = [
+            ("frame_extraction",   "Frame Extraction"),
+            ("feature_extraction", "Feature Extraction"),
+            ("feature_matching",   "Feature Matching"),
+            ("sfm_reconstruction", "SfM Reconstruction"),
+            ("undistortion",       "Image Undistortion"),
+            ("training",           "3DGS Training"),
+        ]
+        timing_lines = [
+            "=== 3DGS Pipeline Timings (Serverless) ===",
+            f"Date:        {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC",
+            f"GPU:         {gpu_info}",
+            f"Job ID:      {job_id}",
+            f"Backend:     {sfm_backend}",
+            f"Settings:    fps={fps}, iterations={iterations}, max_resolution={max_resolution}",
+            "",
+            "Step Timings:",
+        ]
+        for key, label in rows:
+            s = timings.get(key, 0)
+            timing_lines.append(f"  {label:<22} {s:8.2f}s  ({s/60:6.2f}m)")
+        total_s = timings.get("total", 0)
+        timing_lines += [
+            "  " + "─" * 42,
+            f"  {'TOTAL':<22} {total_s:8.2f}s  ({total_s/60:6.2f}m)",
+        ]
+        timings_txt = os.path.join(work_dir, "timings.txt")
+        with open(timings_txt, "w") as f:
+            f.write("\n".join(timing_lines) + "\n")
+
+        # ── 7. Upload PLY + timings.txt to S3 ────────────────────────────────
+        runpod.serverless.progress_update(job, f"[6/6] Uploading to S3... | {gpu_info}")
         s3_key = f"3dgs-outputs/{job_id}/export_{iterations}.ply"
         ply_url = upload_to_s3(ply_path, s3_key)
+        timings_url = upload_to_s3(timings_txt, f"3dgs-outputs/{job_id}/timings.txt")
 
         return {
-            "ply_url":     ply_url,
-            "ply_size_mb": round(ply_size_mb, 1),
-            "job_id":      job_id,
-            "gpu":         gpu_info,
-            "timings":     timings,
+            "ply_url":      ply_url,
+            "timings_url":  timings_url,
+            "ply_size_mb":  round(ply_size_mb, 1),
+            "job_id":       job_id,
+            "gpu":          gpu_info,
+            "timings":      timings,
         }
 
     except Exception as e:

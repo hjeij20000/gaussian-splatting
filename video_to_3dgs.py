@@ -24,6 +24,55 @@ import cv2
 import numpy as np
 
 
+def get_gpu_info() -> str:
+    """Query nvidia-smi for GPU name and total VRAM."""
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=5
+        )
+        if r.returncode == 0:
+            return r.stdout.strip().split("\n")[0].strip()
+    except Exception:
+        pass
+    return "Unknown GPU"
+
+
+def write_timings_file(output_dir: Path, timings: dict, total_time: float,
+                       gpu_info: str, sfm_backend: str, video_path, fps: int,
+                       iterations: int, max_resolution: int):
+    """Write a human-readable timings.txt to the output directory."""
+    from datetime import datetime
+    rows = [
+        ("frame_extraction",   "Frame Extraction"),
+        ("feature_extraction", "Feature Extraction"),
+        ("feature_matching",   "Feature Matching"),
+        ("sfm_reconstruction", "SfM Reconstruction"),
+        ("undistortion",       "Image Undistortion"),
+        ("training",           "3DGS Training"),
+    ]
+    lines = [
+        "=== 3DGS Pipeline Timings ===",
+        f"Date:        {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"GPU:         {gpu_info}",
+        f"Backend:     {sfm_backend}",
+        f"Video:       {video_path}",
+        f"Settings:    fps={fps}, iterations={iterations}, max_resolution={max_resolution}",
+        "",
+        "Step Timings:",
+    ]
+    for key, label in rows:
+        s = timings.get(key, 0)
+        lines.append(f"  {label:<22} {s:8.2f}s  ({s/60:6.2f}m)")
+    lines += [
+        "  " + "─" * 42,
+        f"  {'TOTAL':<22} {total_time:8.2f}s  ({total_time/60:6.2f}m)",
+    ]
+    out = output_dir / "timings.txt"
+    out.write_text("\n".join(lines) + "\n")
+    print(f"[INFO] Timings saved to {out}")
+
+
 def run_command(cmd, description, cwd=None):
     """Run a shell command and handle errors."""
     print(f"\n{'='*60}")
@@ -433,6 +482,8 @@ Examples:
     # Model output directory
     model_dir = output_dir / "model"
 
+    gpu_info = get_gpu_info()
+
     input_label = str(frames_dir) if frames_dir else str(video_path)
     print(f"""
 {'='*60}
@@ -440,6 +491,7 @@ Video to 3D Gaussian Splatting Pipeline
 {'='*60}
 Input:      {input_label}
 Output:     {output_dir}
+GPU:        {gpu_info}
 FPS:        {args.fps}
 Iterations: {args.iterations}
 SfM backend:{sfm_backend}
@@ -516,6 +568,16 @@ To view the model:
   brush {model_dir}/export_{args.iterations}.ply --with-viewer
 {'='*60}
     """)
+
+    write_timings_file(
+        output_dir, timings, total_time,
+        gpu_info=gpu_info,
+        sfm_backend=sfm_backend,
+        video_path=input_label,
+        fps=args.fps,
+        iterations=args.iterations,
+        max_resolution=args.max_resolution,
+    )
 
 
 if __name__ == "__main__":
