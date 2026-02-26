@@ -183,12 +183,122 @@ AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY_ID> AWS_SECRET_ACCESS_KEY='<YOUR_AWS_SECR
 
 ---
 
+## Credentials
+- Stored locally in `gaussian-splatting/.env` (gitignored — never commit this file)
+- `.env` contains: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET`,
+  `AWS_S3_REGION`, `RUNPOD_API_KEY`, `RUNPOD_ENDPOINT_ID`
+- Load in shell: `export $(grep -v '^#' .env | xargs)`
+
+---
+
+## Testing Milestones
+
+### MILESTONE 1 — Local pipeline test ⬜ TODO
+Goal: confirm `video_to_3dgs.py` runs end-to-end on local GPU (RTX 3070 8GB)
+
+```bash
+cd ~/gaussian-splatting
+python3 video_to_3dgs.py \
+  --video ~/Downloads/IMG_2188.MOV \
+  --output /tmp/3dgs_local_test \
+  --sfm-backend fastmap \
+  --fps 1 \
+  --iterations 1000 \
+  --max-resolution 1280
+```
+
+Expected output: `/tmp/3dgs_local_test/model/export_1000.ply`
+
+View result:
+```bash
+python3 -c "
+import open3d as o3d
+pcd = o3d.io.read_point_cloud('/tmp/3dgs_local_test/model/export_1000.ply')
+print('Points:', len(pcd.points))
+o3d.visualization.draw_geometries([pcd])
+"
+```
+
+Record: frame count, timings, PLY size, visual quality notes.
+
+---
+
+### MILESTONE 2 — RunPod pipeline test ⬜ TODO
+Goal: confirm the same video produces a good result on the serverless endpoint
+
+Step 1 — Upload video to S3 so RunPod can fetch it:
+```bash
+export $(grep -v '^#' .env | xargs)
+aws s3 cp ~/Downloads/IMG_2188.MOV \
+  s3://$AWS_S3_BUCKET/test-inputs/IMG_2188.MOV \
+  --region $AWS_S3_REGION
+```
+
+Step 2 — Generate a pre-signed download URL (valid 24h):
+```bash
+aws s3 presign s3://$AWS_S3_BUCKET/test-inputs/IMG_2188.MOV \
+  --region $AWS_S3_REGION \
+  --expires-in 86400
+# Copy the URL output — use it as video_url below
+```
+
+Step 3 — Submit job:
+```bash
+export $(grep -v '^#' .env | xargs)
+curl -X POST "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/run" \
+  -H "Authorization: Bearer $RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "video_url": "<PASTE_PRESIGNED_URL>",
+      "sfm_backend": "fastmap",
+      "fps": 1,
+      "iterations": 1000,
+      "max_resolution": 1280
+    }
+  }'
+# Note the job ID from the response
+```
+
+Step 4 — Poll status:
+```bash
+export $(grep -v '^#' .env | xargs)
+curl "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/status/<JOB_ID>" \
+  -H "Authorization: Bearer $RUNPOD_API_KEY"
+```
+
+Step 5 — Download PLY from S3:
+```bash
+export $(grep -v '^#' .env | xargs)
+aws s3 cp s3://$AWS_S3_BUCKET/3dgs-outputs/<JOB_ID>/export_1000.ply \
+  /tmp/3dgs_runpod_test.ply --region $AWS_S3_REGION
+```
+
+Step 6 — View and compare with local result:
+```bash
+python3 -c "
+import open3d as o3d
+pcd = o3d.io.read_point_cloud('/tmp/3dgs_runpod_test.ply')
+print('Points:', len(pcd.points))
+o3d.visualization.draw_geometries([pcd])
+"
+```
+
+---
+
+### MILESTONE 3 — Quality improvement ⬜ TODO (after both tests pass)
+- Increase iterations: 1000 → 7000 (better density/quality, ~10× longer training)
+- Test mast3r backend (best quality SfM, slower)
+- Test hloc backend (best for low-texture scenes)
+- Auto-scale fps/max_resolution in handler (fix Bug #5)
+
+---
+
 ## Next Steps
-1. Fix pre-signed URL region issue in `handler.py` (Bug #4) — use regional endpoint
-2. Auto-scale fps/max_resolution based on video length/resolution in handler (Bug #5)
-3. ~~Real-world test with IMG_2188.MOV~~ ✅ — COMPLETED, 5.5MB PLY, 141s total
-4. Consider increasing iterations (1000 → 7000+) for better quality on real footage
-5. Test other SfM backends (mast3r, hloc) for quality comparison
+1. ~~Fix pre-signed URL region issue (Bug #4)~~ ✅ Fixed in handler.py (session 3)
+2. Complete MILESTONE 1 — local test
+3. Complete MILESTONE 2 — RunPod test with same video/settings
+4. Compare quality local vs RunPod, then proceed to MILESTONE 3
 
 ---
 
