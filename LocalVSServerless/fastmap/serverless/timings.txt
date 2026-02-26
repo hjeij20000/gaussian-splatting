@@ -1,0 +1,16 @@
+=== 3DGS Pipeline Timings (Serverless) ===
+Date:        2026-02-26 10:01:27 UTC
+GPU:         NVIDIA GeForce RTX 4090, 24564 MiB
+Job ID:      8f73a5dd-ce37-4d03-a3f5-b8390f736cc7-e1
+Backend:     fastmap
+Settings:    fps=1, iterations=7000, max_resolution=1280
+
+Step Timings:
+  Frame Extraction           8.58s  (  0.14m)
+  Feature Extraction         8.02s  (  0.13m)
+  Feature Matching          26.34s  (  0.44m)
+  SfM Reconstruction        62.30s  (  1.04m)
+  Image Undistortion         1.33s  (  0.02m)
+  3DGS Training             54.07s  (  0.90m)
+  ──────────────────────────────────────────
+  TOTAL                    160.64s  (  2.68m)

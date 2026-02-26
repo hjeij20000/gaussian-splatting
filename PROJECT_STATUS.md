@@ -19,29 +19,30 @@ SfM reconstruction → 3DGS training (Brush) → upload PLY to S3.
 
 ## Docker Image
 - **Docker Hub:** `hjeij2000/video-to-3dgs:serverless`
-- **Cache tag:** `hjeij2000/video-to-3dgs:buildcache` (registry cache, stored on Docker Hub)
-- **Last built:** 2026-02-25 at 15:35 (image size: 25.6GB)
-- **Build command (use this from now on):**
+- **Latest versioned tag:** `:v4` (2026-02-26, added libboost for mast3r)
+- **Last built:** 2026-02-26 (~13:17–14:30, image size: 25.6GB)
+- **Build command (RELIABLE — use this):**
   ```bash
-  # Build + push + store cache on Docker Hub in one step (no local cache bloat)
-  docker buildx build \
-    --builder registry-builder \
-    --cache-from type=registry,ref=hjeij2000/video-to-3dgs:buildcache \
-    --cache-to   type=registry,ref=hjeij2000/video-to-3dgs:buildcache,mode=max \
-    -t hjeij2000/video-to-3dgs:serverless \
-    --push \
-    -f gaussian-splatting/Dockerfile .
+  # Step 1: Build with default docker builder (has network access, no DNS issues)
+  docker build \
+    --file gaussian-splatting/Dockerfile \
+    --tag hjeij2000/video-to-3dgs:serverless \
+    .
+  # Step 2: Push (chunked upload, more reliable than buildx --push)
+  docker push hjeij2000/video-to-3dgs:serverless
+  # Step 3: Create versioned tag server-side
+  docker buildx imagetools create hjeij2000/video-to-3dgs:serverless --tag hjeij2000/video-to-3dgs:vN
   ```
-  - Cache lives on Docker Hub (`:buildcache` tag), not on local disk
-  - `mode=max` caches every layer — rebuilds only re-run changed steps
-  - Combined build+push means no separate `docker push` needed
-  - After build, remove local image to free disk: `docker image rm hjeij2000/video-to-3dgs:serverless`
+  **NOTE:** `docker buildx build --push` and `docker buildx build --load` both fail intermittently
+  due to DNS resolution failures inside the buildx container. Use plain `docker build` instead.
+  - No layer cache between `docker build` and buildx — full rebuild each time (~75 min)
+  - After build + push, remove local image: `docker image rm hjeij2000/video-to-3dgs:serverless`
 
 ---
 
 ## RunPod Setup
 - **API domain:** `https://api.runpod.ai` *(NOT `.io` — that returns 404)*
-- **Template ID:** `mrgxwb470f` (name: `video-to-3dgs`)
+- **Template ID:** `mrgxwb470f` (name: `video-to-3dgs`, currently on `:v4`)
 - **Current Endpoint ID:** `6knqxtvmxxsbur` (name: `video-to-3dgs -fb`)
 - **GPUs:** RTX 4090 (primary) + RTX 3090 (fallback)
 - **Workers:** 0 min / 3 max, FlashBoot enabled, idle timeout 5 min
@@ -75,6 +76,39 @@ AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY_ID> AWS_SECRET_ACCESS_KEY='<YOUR_AWS_SECR
 ---
 
 ## Session Log
+
+### Session 4 (2026-02-26) — LocalVSServerless benchmark testing
+- **Goal:** Compare fastmap / mast3r / hloc serverless outputs for same video (IMG_2188.MOV)
+- **Settings:** fps=2 (fastmap/hloc at fps=1 due to OOM), iterations=7000, max_resolution=1280 (hloc: 960)
+- **Docker rebuild (`:v4`):** Added `libboost-program-options1.74.0`, `libboost-filesystem1.74.0`,
+  `libboost-graph1.74.0` to fix mast3r/GLOMAP crash (`libboost_program_options.so.1.74.0: not found`)
+- **Build issues:**
+  - buildx builder DNS failed (transient network issue in container) → switched to plain `docker build`
+  - Full rebuild took ~75 min (no shared cache between buildx and default builder)
+- **Results so far:**
+  - **fastmap** ✅ COMPLETED — `LocalVSServerless/fastmap/serverless/` (121.3MB PLY, 160.64s total, RTX 4090)
+    - fps=1, 58 frames, `8f73a5dd-...`
+  - **hloc** ✅ COMPLETED — `LocalVSServerless/hloc/serverless/` (80MB PLY, 100.48s total, RTX 4090)
+    - fps=2, max_res=960, `20e317a2-...` (feat extract/matching timings = 0 — hloc handles these inside SfM step)
+  - **mast3r** ⏳ IN_QUEUE — `41d4e61b-86fc-42db-a1d5-f5f140972353-e2`, fps=1, iterations=7000, max_res=1280
+
+### Session 3 (2026-02-26) — IMG_2188 real-world test
+- **Discovered Bug #4** (pre-signed URL region issue) — confirmed broken on download
+- **Discovered Bug #5** (stale image cache on worker `wk5qtlitw4nwlw`) — old image
+  had no Vulkan/XDG fix, causing immediate Brush crash on any job hitting that worker
+- **Fix:** Created `:v2` tag on Docker Hub server-side (no local download) via
+  `docker buildx imagetools create`, updated RunPod template from `:serverless` → `:v2`
+  to force all workers to pull fresh image
+- **Discovered Bug #6** (Brush OOM on large video) — `IMG_2188.MOV` is 2816x1584,
+  57.9s at 24fps. At fps=2 → 115 frames at max_res=1920, Brush crashes with SIGSEGV
+  (-11) due to GPU memory exhaustion
+- **Fix:** Reduced to fps=1 (58 frames) + max_resolution=1280 → fits in GPU VRAM
+- **Test job result:** `71b86608-673e-4caf-bb44-6b741b4c334e-e1` — **COMPLETED ✅**
+  - Video: IMG_2188.MOV (2816x1584, 57.9s, iPhone HEVC)
+  - Settings: fastmap, fps=1, iterations=1000, max_resolution=1280
+  - PLY: 5.5MB uploaded to S3, downloaded and viewed in Open3D
+  - Timings: frame 13.86s | feat extract 16.06s | matching 44.73s |
+    SfM 53.71s | training 12s | undistortion 0.97s | **total 141.32s**
 
 ### Session 1 (pre-2026-02-25) — Initial pipeline + bug fixes
 - Built initial Docker image and RunPod serverless handler
@@ -145,6 +179,19 @@ AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY_ID> AWS_SECRET_ACCESS_KEY='<YOUR_AWS_SECR
 ---
 
 ## Known Issues / To Fix
+
+### 7. GLOMAP missing libboost ✅ FIXED in :v4
+- **Error:** `libboost_program_options.so.1.74.0: No such file or directory` (mast3r backend only)
+- **Cause:** GLOMAP binary linked against boost libs not present in runtime image
+- **Fix (Dockerfile):** Added to runtime apt-get: `libboost-program-options1.74.0`,
+  `libboost-filesystem1.74.0`, `libboost-graph1.74.0`
+- **Rebuilt as `:v4`** (2026-02-26)
+
+### 6. buildx DNS failure inside builder container ⚠️
+- **Error:** `Temporary failure in name resolution` during `pip install torch` inside buildx container
+- **Cause:** Docker buildx builder runs in its own network namespace which sometimes loses DNS
+- **Workaround:** Use plain `docker build` (runs in host network) then `docker push`
+- Full rebuild takes ~75 min with default builder (no cache sharing with buildx)
 
 ### 5. Brush OOM on high-res/long videos ⚠️ (workaround known)
 - **Error:** Brush crashes with SIGSEGV (-11) during training
@@ -296,17 +343,19 @@ o3d.visualization.draw_geometries([pcd])
 
 ## Next Steps
 1. ~~Fix pre-signed URL region issue (Bug #4)~~ ✅ Fixed in handler.py (session 3)
-2. Complete MILESTONE 1 — local test
-3. Complete MILESTONE 2 — RunPod test with same video/settings
-4. Compare quality local vs RunPod, then proceed to MILESTONE 3
+2. ~~MILESTONE 2 serverless testing~~ ✅ fastmap + hloc COMPLETED (session 4)
+3. ⏳ **Poll mast3r job** `41d4e61b-86fc-42db-a1d5-f5f140972353-e2` until complete → download to `LocalVSServerless/mast3r/serverless/`
+4. Compare all 3 PLYs in Open3D: fastmap (121MB) vs hloc (80MB) vs mast3r (TBD)
+5. Clean up docker image to free ~25.6GB: `docker image rm hjeij2000/video-to-3dgs:serverless`
 
 ---
 
 ## Storage Management
-- Disk: 192GB total
-- **After last cleanup (2026-02-25):** freed ~65GB (25.6GB image + 39.37GB builder cache)
+- Disk: 192GB total, **currently 160GB used, 22GB free (89%)**
+- Local docker image `hjeij2000/video-to-3dgs:serverless` = 25.6GB (safely removable — already on Docker Hub)
+- **Run to free ~25.6GB:** `docker image rm hjeij2000/video-to-3dgs:serverless`
+- **LocalVSServerless folder:** 195MB (fastmap 121MB + hloc 80MB + mast3r TBD)
 - **Post-build cleanup routine (run after every build):**
   1. `docker image rm hjeij2000/video-to-3dgs:serverless` — remove local image (already on Hub)
-  2. `docker builder prune -f` — clear buildx builder cache
-  - Cache lives on Docker Hub (`:buildcache` tag) — safe to prune locally anytime
+  2. `docker builder prune -f` — clear buildx builder cache (~7GB currently)
 - `docker system prune -a -f` — nuclear option, only if disk critically low
