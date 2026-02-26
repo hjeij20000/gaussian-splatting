@@ -128,7 +128,7 @@ def fmt_time(seconds: float) -> str:
 def session_summary(sess: dict) -> str:
     backend = sess.get("backend", "?")
     label   = BACKEND_INFO.get(backend, {}).get("label", backend)
-    arg     = sess.get("arg_name", "")
+    arg     = sess.get("arg_name", "").replace("_", " ")   # underscores break Markdown
     val     = sess.get("arg_value", "")
     arg_str = f"  {arg}: {val}\n" if arg else ""
     return (
