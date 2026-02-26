@@ -19,7 +19,7 @@ SfM reconstruction → 3DGS training (Brush) → upload PLY to S3.
 
 ## Docker Image
 - **Docker Hub:** `hjeij2000/video-to-3dgs:serverless`
-- **Latest versioned tag:** `:v4` (2026-02-26, added libboost for mast3r)
+- **Latest versioned tag:** `:v6` (2026-02-26, fixed entrypoint + added libopenblas for mast3r)
 - **Last built:** 2026-02-26 (~13:17–14:30, image size: 25.6GB)
 - **Build command (RELIABLE — use this):**
   ```bash
@@ -42,10 +42,10 @@ SfM reconstruction → 3DGS training (Brush) → upload PLY to S3.
 
 ## RunPod Setup
 - **API domain:** `https://api.runpod.ai` *(NOT `.io` — that returns 404)*
-- **Template ID:** `mrgxwb470f` (name: `video-to-3dgs`, currently on `:v4`)
-- **Current Endpoint ID:** `6knqxtvmxxsbur` (name: `video-to-3dgs -fb`)
-- **GPUs:** RTX 4090 (primary) + RTX 3090 (fallback)
-- **Workers:** 0 min / 3 max, FlashBoot enabled, idle timeout 5 min
+- **Template ID:** `mrgxwb470f` (name: `video-to-3dgs`, currently on `:v6`)
+- **Current Endpoint ID:** `uupefx2whvkg13` (name: `video-to-3dgs`)
+- **GPUs:** ADA_24 + AMPERE_24
+- **Workers:** 1 min / 2 max, FlashBoot OFF, idle timeout 10 min
 - **Template env vars set:**
   - `AWS_ACCESS_KEY_ID` = `<YOUR_AWS_ACCESS_KEY_ID>`
   - `AWS_SECRET_ACCESS_KEY` = `<YOUR_AWS_SECRET_ACCESS_KEY>`
@@ -58,10 +58,10 @@ SfM reconstruction → 3DGS training (Brush) → upload PLY to S3.
 curl -X POST "https://api.runpod.ai/v2/6knqxtvmxxsbur/run" \
   -H "Authorization: Bearer <YOUR_RUNPOD_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"input": {"video_url": "...", "sfm_backend": "fastmap", "fps": 2, "iterations": 1000}}'
+  -d '{"input": {"video_url": "...", "sfm_backend": "mast3r", "fps": 1, "iterations": 7000, "max_resolution": 960}}'
 
 # Check status
-curl "https://api.runpod.ai/v2/6knqxtvmxxsbur/status/{JOB_ID}" \
+curl "https://api.runpod.ai/v2/uupefx2whvkg13/status/{JOB_ID}" \
   -H "Authorization: Bearer <YOUR_RUNPOD_API_KEY>"
 
 # List endpoints (REST)
@@ -77,20 +77,23 @@ AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY_ID> AWS_SECRET_ACCESS_KEY='<YOUR_AWS_SECR
 
 ## Session Log
 
-### Session 4 (2026-02-26) — LocalVSServerless benchmark testing
+### Session 4 (2026-02-26) — LocalVSServerless benchmark testing ✅ COMPLETE
 - **Goal:** Compare fastmap / mast3r / hloc serverless outputs for same video (IMG_2188.MOV)
-- **Settings:** fps=2 (fastmap/hloc at fps=1 due to OOM), iterations=7000, max_resolution=1280 (hloc: 960)
-- **Docker rebuild (`:v4`):** Added `libboost-program-options1.74.0`, `libboost-filesystem1.74.0`,
-  `libboost-graph1.74.0` to fix mast3r/GLOMAP crash (`libboost_program_options.so.1.74.0: not found`)
-- **Build issues:**
-  - buildx builder DNS failed (transient network issue in container) → switched to plain `docker build`
-  - Full rebuild took ~75 min (no shared cache between buildx and default builder)
-- **Results so far:**
+- **Settings:** fps=1 (mast3r/fastmap), fps=2 (hloc), iterations=7000, max_resolution=1280 (hloc+mast3r: 960)
+- **Docker fixes (`:v4`→`:v5`→`:v6`):**
+  - `:v4` — Added libboost for GLOMAP (but `docker build` used cached layers + `docker commit` overwrote ENTRYPOINT)
+  - `:v5` — Fixed ENTRYPOINT via `docker commit --change='ENTRYPOINT [...]'` (was set to apt-get cmd!)
+  - `:v6` — Added `libopenblas0-pthread` for GLOMAP (`libopenblas.so.0: not found`)
+- **Root cause of all "workers idle, jobs IN_QUEUE" issues:** The `:v4` image had its ENTRYPOINT
+  overwritten by `docker commit` to `bash -c "apt-get install boost..."`. Every worker ran apt-get
+  then exited — handler.py never started, so workers appeared idle but never processed jobs.
+- **Results:**
   - **fastmap** ✅ COMPLETED — `LocalVSServerless/fastmap/serverless/` (121.3MB PLY, 160.64s total, RTX 4090)
-    - fps=1, 58 frames, `8f73a5dd-...`
+    - fps=1, `8f73a5dd-...`
   - **hloc** ✅ COMPLETED — `LocalVSServerless/hloc/serverless/` (80MB PLY, 100.48s total, RTX 4090)
-    - fps=2, max_res=960, `20e317a2-...` (feat extract/matching timings = 0 — hloc handles these inside SfM step)
-  - **mast3r** ⏳ IN_QUEUE — `41d4e61b-86fc-42db-a1d5-f5f140972353-e2`, fps=1, iterations=7000, max_res=1280
+    - fps=2, max_res=960, `20e317a2-...`
+  - **mast3r** ✅ COMPLETED — `LocalVSServerless/mast3r/serverless/` (130MB PLY, 387.34s total, RTX 4090)
+    - fps=1, max_res=960, `107dcd45-...` (SfM=308s dominant, 58 images, 54572 tracks)
 
 ### Session 3 (2026-02-26) — IMG_2188 real-world test
 - **Discovered Bug #4** (pre-signed URL region issue) — confirmed broken on download
@@ -179,6 +182,20 @@ AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY_ID> AWS_SECRET_ACCESS_KEY='<YOUR_AWS_SECR
 ---
 
 ## Known Issues / To Fix
+
+### 9. GLOMAP missing libopenblas ✅ FIXED in :v6
+- **Error:** `/usr/local/bin/glomap: error while loading shared libraries: libopenblas.so.0`
+- **Cause:** GLOMAP binary also requires OpenBLAS, not included in runtime image
+- **Fix (Dockerfile):** Added `libopenblas0-pthread` to runtime apt-get
+- **Fixed via docker commit** → `:v6` (2026-02-26)
+
+### 8. docker commit overwrites ENTRYPOINT ✅ FIXED in :v5
+- **Error:** Workers appear "idle" but jobs stay IN_QUEUE forever
+- **Cause:** `docker commit` without `--change='ENTRYPOINT ...'` copies the running container's CMD
+  (the `apt-get install boost...` command) as the new image CMD, replacing the original ENTRYPOINT.
+  Workers ran apt-get then exited — handler.py never started.
+- **Fix:** Always use `docker commit --change='ENTRYPOINT [...]' --change='CMD []'` when patching layers
+- **Rebuilt as `:v5`** with correct entrypoint (2026-02-26)
 
 ### 7. GLOMAP missing libboost ✅ FIXED in :v4
 - **Error:** `libboost_program_options.so.1.74.0: No such file or directory` (mast3r backend only)

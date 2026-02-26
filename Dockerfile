@@ -82,10 +82,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb \
         # SSH (required by RunPod for interactive pod access)
         openssh-server \
-        # Boost — required by the glomap binary (mast3r backend)
+        # Boost + OpenBLAS — required by the glomap binary (mast3r backend)
         libboost-program-options1.74.0 \
         libboost-filesystem1.74.0 \
         libboost-graph1.74.0 \
+        libopenblas0-pthread \
         # Misc
         git wget curl ca-certificates \
     && ln -sf /usr/bin/python3.10 /usr/bin/python3 \
