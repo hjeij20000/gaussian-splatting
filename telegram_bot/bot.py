@@ -327,37 +327,38 @@ async def handle_wizard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Session expired. Please send your video again.")
         return
 
-    _, step, value = query.data.split(":", 2)
+    try:
+        _, step, value = query.data.split(":", 2)
 
-    if step == "backend":
-        sess["backend"]  = value
-        sess["arg_name"] = BACKEND_INFO[value]["arg_name"]
-        await ask_fps(query, sess)
+        if step == "backend":
+            sess["backend"]  = value
+            sess["arg_name"] = BACKEND_INFO[value]["arg_name"]
+            await ask_fps(query, sess)
 
-    elif step == "fps":
-        sess["fps"] = int(value)
-        await ask_resolution(query, sess)
+        elif step == "fps":
+            sess["fps"] = int(value)
+            await ask_resolution(query, sess)
 
-    elif step == "resolution":
-        sess["resolution"] = int(value)
-        await ask_backend_arg(query, sess)
+        elif step == "resolution":
+            sess["resolution"] = int(value)
+            await ask_backend_arg(query, sess)
 
-    elif step == "arg":
-        sess["arg_value"] = int(value)
-        await ask_iterations(query, sess)
+        elif step == "arg":
+            sess["arg_value"] = int(value)
+            await ask_iterations(query, sess)
 
-    elif step == "iterations":
-        sess["iterations"] = int(value)
-        # All settings collected — confirm and submit
-        await query.edit_message_text(
-            f"✅ *All set! Submitting your job…*\n\n{session_summary(sess)}",
-            parse_mode="Markdown",
-        )
-        ctx.application.create_task(
-            _run_job(query, sess.copy()),
-            update=update,
-        )
-        sessions.pop(user_id, None)
+        elif step == "iterations":
+            sess["iterations"] = int(value)
+            sessions.pop(user_id, None)
+            await query.edit_message_text(
+                f"✅ *All set! Submitting your job…*\n\n{session_summary(sess)}",
+                parse_mode="Markdown",
+            )
+            asyncio.create_task(_run_job(query, sess.copy()))
+
+    except Exception as exc:
+        logger.exception("Wizard error")
+        await query.edit_message_text(f"❌ Error: {exc}")
 
 
 async def _run_job(query, sess: dict):
@@ -418,8 +419,13 @@ async def _run_job(query, sess: dict):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE):
+    logger.error("Unhandled exception", exc_info=ctx.error)
+
+
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app.add_error_handler(error_handler)
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help",  cmd_start))
