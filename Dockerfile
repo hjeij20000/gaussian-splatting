@@ -66,6 +66,8 @@ ENV CUDA_HOME=/usr/local/cuda
 ENV PATH="${CUDA_HOME}/bin:${PATH}"
 # Tells PyTorch to use expandable VRAM segments (avoids OOM on 8GB cards)
 ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Enable all NVIDIA driver capabilities (compute + graphics/Vulkan for Brush)
+ENV NVIDIA_DRIVER_CAPABILITIES=all
 
 # ── Runtime system packages ────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -124,6 +126,13 @@ RUN pip3 install --no-cache-dir \
 # ── Brush 0.3.0 binary (Vulkan/wgpu — GPU-vendor agnostic) ─────────────────
 COPY brush-app-x86_64-unknown-linux-gnu/brush_app /usr/local/bin/brush
 RUN chmod +x /usr/local/bin/brush
+
+# ── NVIDIA Vulkan ICD (needed for Brush/wgpu to use the hardware GPU) ───────
+# NVIDIA_DRIVER_CAPABILITIES=all tells the container runtime to mount the
+# NVIDIA graphics libs; this ICD JSON tells Vulkan where to find them.
+RUN mkdir -p /usr/share/vulkan/icd.d && \
+    printf '{\n    "file_format_version": "1.0.0",\n    "ICD": {\n        "library_path": "libGLX_nvidia.so.0",\n        "api_version": "1.3.0"\n    }\n}\n' \
+    > /usr/share/vulkan/icd.d/nvidia_icd.json
 
 # ── GLOMAP binary (compiled from source on host) ────────────────────────────
 COPY local/bin/glomap /usr/local/bin/glomap

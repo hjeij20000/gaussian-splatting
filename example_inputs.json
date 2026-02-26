@@ -1,0 +1,54 @@
+{
+  "examples": [
+    {
+      "_description": "mast3r — best quality, slowest. Uses deep feature matching + GLOMAP mapper.",
+      "video_url": "https://example.com/my_video.mp4",
+      "sfm_backend": "mast3r",
+      "fps": 2,
+      "iterations": 7000,
+      "max_resolution": 1920,
+      "oversample": 3,
+      "window_size": 10
+    },
+    {
+      "_description": "fastmap — fast SIFT features + FastMap mapper. Good default for most scenes.",
+      "video_url": "https://example.com/my_video.mp4",
+      "sfm_backend": "fastmap",
+      "fps": 2,
+      "iterations": 7000,
+      "max_resolution": 1920,
+      "oversample": 3,
+      "match_overlap": 5
+    },
+    {
+      "_description": "colmap — SIFT features + COLMAP incremental mapper. More reliable than fastmap on tricky scenes.",
+      "video_url": "https://example.com/my_video.mp4",
+      "sfm_backend": "colmap",
+      "fps": 2,
+      "iterations": 7000,
+      "max_resolution": 1920,
+      "oversample": 3,
+      "match_overlap": 5
+    },
+    {
+      "_description": "hloc — SuperPoint + LightGlue features + COLMAP mapper. Best balance of speed and quality for low-texture/metallic scenes.",
+      "video_url": "https://example.com/my_video.mp4",
+      "sfm_backend": "hloc",
+      "fps": 2,
+      "iterations": 7000,
+      "max_resolution": 1920,
+      "oversample": 3,
+      "match_overlap": 5
+    }
+  ],
+  "argument_reference": {
+    "video_url":      "URL to the input video (HTTP/HTTPS or Google Drive share link). Required.",
+    "sfm_backend":    "SfM backend to use: mast3r | fastmap | colmap | hloc. Default: mast3r",
+    "fps":            "Frames per second to extract from the video. Default: 2",
+    "iterations":     "Number of Brush training steps. Default: 7000 (use 30000 for higher quality)",
+    "max_resolution": "Max image dimension (pixels) passed to Brush trainer. Default: 1920",
+    "oversample":     "Extract fps*oversample frames then keep the sharpest per window. Default: 3",
+    "window_size":    "[mast3r only] Sliding-window pair size for MASt3R matching. Default: 10",
+    "match_overlap":  "[fastmap | colmap | hloc only] COLMAP sequential matching overlap. Default: 5"
+  }
+}

@@ -35,6 +35,7 @@ def run_command(cmd, description, cwd=None):
     env = os.environ.copy()
     env.pop("QT_PLUGIN_PATH", None)
     env["QT_QPA_PLATFORM"] = "offscreen"
+    env.setdefault("XDG_RUNTIME_DIR", "/tmp")
 
     start_time = time.time()
     result = subprocess.run(cmd, cwd=cwd, env=env)
@@ -123,8 +124,7 @@ def extract_frames(video_path: Path, output_dir: Path, fps: int = 2,
 
     cmd = [
         "ffmpeg", "-y",
-        "-hwaccel", "cuda",
-        "-c:v", "hevc_cuvid",
+        "-loglevel", "warning",
         "-i", str(video_path),
         "-vf", f"fps={extract_fps}",
         "-q:v", "1",
