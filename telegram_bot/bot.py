@@ -101,7 +101,7 @@ async def runpod_submit(video_url: str, backend: str) -> str:
             "max_resolution": max_res,
         }
     }
-    async with aiohttp.ClientSession() as s:
+    async with aiohttp.ClientSession(headers={"Accept-Encoding": "gzip, deflate"}) as s:
         async with s.post(f"{RUNPOD_BASE}/run", json=payload, headers=HEADERS) as r:
             data = await r.json()
     return data["id"]
@@ -109,7 +109,7 @@ async def runpod_submit(video_url: str, backend: str) -> str:
 
 async def runpod_poll(job_id: str) -> dict:
     """Poll every 20 s until COMPLETED / FAILED / CANCELLED."""
-    async with aiohttp.ClientSession() as s:
+    async with aiohttp.ClientSession(headers={"Accept-Encoding": "gzip, deflate"}) as s:
         while True:
             async with s.get(f"{RUNPOD_BASE}/status/{job_id}", headers=HEADERS) as r:
                 data = await r.json()
