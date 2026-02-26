@@ -60,6 +60,7 @@ import subprocess
 from pathlib import Path
 
 import boto3
+from botocore.config import Config
 import gdown
 import requests
 import runpod
@@ -130,7 +131,8 @@ def upload_to_s3(local_path: str, s3_key: str) -> str:
     bucket = os.environ["AWS_S3_BUCKET"]
     region = os.environ.get("AWS_S3_REGION", "us-east-1")
     endpoint_url = f"https://s3.{region}.amazonaws.com"
-    s3 = boto3.client("s3", region_name=region, endpoint_url=endpoint_url)
+    s3 = boto3.client("s3", region_name=region, endpoint_url=endpoint_url,
+                      config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}))
     s3.upload_file(local_path, bucket, s3_key)
     url = s3.generate_presigned_url(
         "get_object",

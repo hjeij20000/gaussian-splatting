@@ -14,6 +14,7 @@ import uuid
 
 import aiohttp
 import boto3
+from botocore.config import Config
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
@@ -49,6 +50,7 @@ s3 = boto3.client(
     endpoint_url=f"https://s3.{AWS_REGION}.amazonaws.com",
     aws_access_key_id=AWS_KEY_ID,
     aws_secret_access_key=AWS_SECRET,
+    config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
 )
 
 # user_id → session dict
@@ -362,14 +364,22 @@ async def handle_wizard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _run_job(query, sess: dict):
+    chat_id = query.message.chat_id
+    bot     = query.get_bot()
+
+    async def send(text, **kw):
+        return await bot.send_message(chat_id, text, **kw)
+
     try:
+        status_msg = await send("🔄 Submitting to GPU…")
+
         job_id = await runpod_submit(sess)
-        backend_label = BACKEND_INFO.get(sess["backend"], {}).get("label", sess["backend"])
-        await query.edit_message_text(
-            f"🔄 *Processing on GPU…*\n\n"
+        logger.info("Job submitted: %s", job_id)
+
+        await status_msg.edit_text(
+            f"🔄 Processing on GPU…\nJob: `{job_id}`\n\n"
             f"{session_summary(sess)}"
-            f"\n_Job ID: `{job_id}`_\n"
-            f"_I'll update this message when it's done._",
+            f"\n_I'll message you when it's done._",
             parse_mode="Markdown",
         )
 
@@ -395,7 +405,7 @@ async def _run_job(query, sess: dict):
                 + f"  *Total: {fmt_time(t.get('total', 0))}*"
             )
 
-            await query.edit_message_text(
+            await send(
                 f"🎉 *Your 3D model is ready!*\n\n"
                 f"⏱ *Timings:*\n{timings_str}\n\n"
                 f"📦 *File size:* {ply_mb:.1f} MB\n\n"
@@ -405,16 +415,16 @@ async def _run_job(query, sess: dict):
                 disable_web_page_preview=True,
             )
         else:
-            err = str(result.get("error", "Unknown error"))
+            err     = str(result.get("error", "Unknown error"))
             snippet = err[-400:].strip()
-            await query.edit_message_text(
-                f"❌ *Processing failed.*\n\n```\n{snippet}\n```",
-                parse_mode="Markdown",
-            )
+            await send(f"❌ Processing failed.\n\n{snippet}")
 
     except Exception as exc:
         logger.exception("Unhandled error in _run_job")
-        await query.edit_message_text(f"❌ An unexpected error occurred:\n{exc}")
+        try:
+            await send(f"❌ Error: {exc}")
+        except Exception:
+            pass
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
