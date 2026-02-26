@@ -254,17 +254,26 @@ async def _run_job(query, video_url: str, backend: str, label: str):
             ply_url  = out.get("ply_url", "")
             ply_mb   = out.get("ply_size_mb", 0)
             total    = timings.get("total", 0)
-            sfm      = timings.get("sfm_reconstruction", 0)
-            train    = timings.get("training", 0)
             frames   = timings.get("frame_extraction", 0)
+            feat_ext = timings.get("feature_extraction", 0)
+            feat_mat = timings.get("feature_matching", 0)
+            sfm      = timings.get("sfm_reconstruction", 0)
+            undist   = timings.get("undistortion", 0)
+            train    = timings.get("training", 0)
+
+            def row(label, secs):
+                return f"  {label}: {fmt_time(secs)}\n" if secs > 0 else ""
 
             text = (
                 f"🎉 *Your 3D model is ready!*\n\n"
                 f"⏱ *Timings:*\n"
-                f"  Frame extraction: {fmt_time(frames)}\n"
-                f"  SfM reconstruction: {fmt_time(sfm)}\n"
-                f"  3DGS training: {fmt_time(train)}\n"
-                f"  *Total: {fmt_time(total)}*\n\n"
+                + row("Frame extraction", frames)
+                + row("Feature extraction", feat_ext)
+                + row("Feature matching", feat_mat)
+                + row("SfM reconstruction", sfm)
+                + row("Undistortion", undist)
+                + row("3DGS training", train)
+                + f"  *Total: {fmt_time(total)}*\n\n"
                 f"📦 *File size:* {ply_mb:.1f} MB\n\n"
                 f"⬇️ *Download your `.ply`:*\n"
                 f"{ply_url}\n\n"
