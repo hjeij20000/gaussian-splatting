@@ -2,10 +2,8 @@
 """
 Telegram bot for Video → 3D Gaussian Splatting pipeline.
 
-Users send a video (file, Google Drive link, or direct URL) and choose
-Fast (fastmap, ~2.5 min) or Best Quality (mast3r, ~6.5 min).
-The bot submits to RunPod, polls for completion, and replies with
-a download link for the .ply file + a timing summary.
+Wizard flow:
+  video/link → backend → fps → resolution → backend arg → iterations → submit
 """
 
 import asyncio
@@ -33,16 +31,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
-TELEGRAM_TOKEN    = os.environ["TELEGRAM_BOT_TOKEN"]
-RUNPOD_API_KEY    = os.environ["RUNPOD_API_KEY"]
-RUNPOD_ENDPOINT   = os.environ["RUNPOD_ENDPOINT_ID"]
-AWS_KEY_ID        = os.environ["AWS_ACCESS_KEY_ID"]
-AWS_SECRET        = os.environ["AWS_SECRET_ACCESS_KEY"]
-AWS_BUCKET        = os.environ["AWS_S3_BUCKET"]
-AWS_REGION        = os.environ["AWS_S3_REGION"]
+TELEGRAM_TOKEN  = os.environ["TELEGRAM_BOT_TOKEN"]
+RUNPOD_API_KEY  = os.environ["RUNPOD_API_KEY"]
+RUNPOD_ENDPOINT = os.environ["RUNPOD_ENDPOINT_ID"]
+AWS_KEY_ID      = os.environ["AWS_ACCESS_KEY_ID"]
+AWS_SECRET      = os.environ["AWS_SECRET_ACCESS_KEY"]
+AWS_BUCKET      = os.environ["AWS_S3_BUCKET"]
+AWS_REGION      = os.environ["AWS_S3_REGION"]
 
 RUNPOD_BASE = f"https://api.runpod.ai/v2/{RUNPOD_ENDPOINT}"
 HEADERS     = {"Authorization": f"Bearer {RUNPOD_API_KEY}"}
+NO_BR       = {"Accept-Encoding": "gzip, deflate"}
 
 s3 = boto3.client(
     "s3",
@@ -52,36 +51,41 @@ s3 = boto3.client(
     aws_secret_access_key=AWS_SECRET,
 )
 
-# user_id → video_url waiting for backend choice
-pending: dict[int, str] = {}
+# user_id → session dict
+sessions: dict[int, dict] = {}
+
+BACKEND_INFO = {
+    "fastmap": {"label": "⚡ fastmap",  "arg_name": "match_overlap", "default_fps": 2},
+    "hloc":    {"label": "🔍 hloc",     "arg_name": "match_overlap", "default_fps": 2},
+    "mast3r":  {"label": "🎯 mast3r",   "arg_name": "window_size",   "default_fps": 1},
+}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def kb(buttons: list[list[tuple[str, str]]]) -> InlineKeyboardMarkup:
+    """Build InlineKeyboardMarkup from list of rows of (label, callback_data)."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(label, callback_data=data) for label, data in row]
+        for row in buttons
+    ])
+
+
 def extract_gdrive_url(text: str) -> str | None:
-    """Convert a Google Drive share link to a direct download URL."""
-    patterns = [
+    for pat in [
         r"drive\.google\.com/file/d/([a-zA-Z0-9_-]+)",
         r"drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)",
         r"docs\.google\.com/[^/]+/d/([a-zA-Z0-9_-]+)",
-    ]
-    for pat in patterns:
+    ]:
         m = re.search(pat, text)
         if m:
-            fid = m.group(1)
-            return f"https://drive.google.com/uc?export=download&id={fid}&confirm=t"
+            return f"https://drive.google.com/uc?export=download&id={m.group(1)}&confirm=t"
     return None
 
 
 async def upload_to_s3(data: bytes, filename: str) -> str:
-    """Upload raw bytes to S3 and return a 24-hour pre-signed URL."""
     key = f"telegram-inputs/{uuid.uuid4()}/{filename}"
-    s3.put_object(
-        Bucket=AWS_BUCKET,
-        Key=key,
-        Body=data,
-        ContentType="video/mp4",
-    )
+    s3.put_object(Bucket=AWS_BUCKET, Key=key, Body=data, ContentType="video/mp4")
     return s3.generate_presigned_url(
         "get_object",
         Params={"Bucket": AWS_BUCKET, "Key": key},
@@ -89,27 +93,25 @@ async def upload_to_s3(data: bytes, filename: str) -> str:
     )
 
 
-async def runpod_submit(video_url: str, backend: str) -> str:
-    fps     = 1 if backend == "mast3r" else 2
-    max_res = 960
+async def runpod_submit(sess: dict) -> str:
     payload = {
         "input": {
-            "video_url":   video_url,
-            "sfm_backend": backend,
-            "fps":         fps,
-            "iterations":  7000,
-            "max_resolution": max_res,
+            "video_url":      sess["video_url"],
+            "sfm_backend":    sess["backend"],
+            "fps":            sess["fps"],
+            "iterations":     sess["iterations"],
+            "max_resolution": sess["resolution"],
+            sess["arg_name"]: sess["arg_value"],
         }
     }
-    async with aiohttp.ClientSession(headers={"Accept-Encoding": "gzip, deflate"}) as s:
+    async with aiohttp.ClientSession(headers=NO_BR) as s:
         async with s.post(f"{RUNPOD_BASE}/run", json=payload, headers=HEADERS) as r:
             data = await r.json()
     return data["id"]
 
 
 async def runpod_poll(job_id: str) -> dict:
-    """Poll every 20 s until COMPLETED / FAILED / CANCELLED."""
-    async with aiohttp.ClientSession(headers={"Accept-Encoding": "gzip, deflate"}) as s:
+    async with aiohttp.ClientSession(headers=NO_BR) as s:
         while True:
             async with s.get(f"{RUNPOD_BASE}/status/{job_id}", headers=HEADERS) as r:
                 data = await r.json()
@@ -123,44 +125,152 @@ def fmt_time(seconds: float) -> str:
     return f"{m}m {s:02d}s" if m else f"{s}s"
 
 
-# ── Handlers ──────────────────────────────────────────────────────────────────
+def session_summary(sess: dict) -> str:
+    backend = sess.get("backend", "?")
+    label   = BACKEND_INFO.get(backend, {}).get("label", backend)
+    arg     = sess.get("arg_name", "")
+    val     = sess.get("arg_value", "")
+    arg_str = f"  {arg}: {val}\n" if arg else ""
+    return (
+        f"*Settings so far:*\n"
+        f"  Backend: {label}\n"
+        f"  FPS: {sess.get('fps', '?')}\n"
+        f"  Resolution: {sess.get('resolution', '?')}px\n"
+        f"{arg_str}"
+        f"  Iterations: {sess.get('iterations', '?')}\n"
+    )
+
+
+# ── Wizard steps ──────────────────────────────────────────────────────────────
+
+async def ask_backend(query_or_msg, user_id: int):
+    sessions[user_id]["step"] = "backend"
+    text = (
+        "🎬 *Step 1 / 5 — Reconstruction method*\n\n"
+        "• *fastmap* — Fast SIFT matching. Great all-rounder (~2.5 min)\n"
+        "• *hloc* — SuperPoint + LightGlue. Best for shiny/low-texture scenes (~3 min)\n"
+        "• *mast3r* — AI deep matching. Highest quality, slowest (~6.5 min)"
+    )
+    markup = kb([
+        [("⚡ fastmap", "w:backend:fastmap"),
+         ("🔍 hloc",    "w:backend:hloc"),
+         ("🎯 mast3r",  "w:backend:mast3r")],
+    ])
+    if hasattr(query_or_msg, "edit_message_text"):
+        await query_or_msg.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+    else:
+        await query_or_msg.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
+async def ask_fps(query, sess: dict):
+    sess["step"] = "fps"
+    default = BACKEND_INFO[sess["backend"]]["default_fps"]
+    text = (
+        f"📸 *Step 2 / 5 — Frames per second*\n\n"
+        f"How many frames to extract per second of video.\n"
+        f"More frames = better quality but slower.\n"
+        f"_(Recommended: {default} fps for {sess['backend']})_"
+    )
+    markup = kb([[
+        ("1 fps",  "w:fps:1"),
+        ("2 fps",  "w:fps:2"),
+        ("3 fps",  "w:fps:3"),
+    ]])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
+async def ask_resolution(query, sess: dict):
+    sess["step"] = "resolution"
+    text = (
+        "🖼 *Step 3 / 5 — Max resolution*\n\n"
+        "Maximum image size used during reconstruction and training.\n"
+        "Higher = more detail but uses more GPU memory.\n\n"
+        "• *640px* — Fast, lower detail\n"
+        "• *960px* — Balanced _(recommended)_\n"
+        "• *1280px* — High detail, more memory"
+    )
+    markup = kb([[
+        ("640px",  "w:resolution:640"),
+        ("960px",  "w:resolution:960"),
+        ("1280px", "w:resolution:1280"),
+    ]])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
+async def ask_backend_arg(query, sess: dict):
+    sess["step"] = "arg"
+    backend  = sess["backend"]
+    arg_name = BACKEND_INFO[backend]["arg_name"]
+    sess["arg_name"] = arg_name
+
+    if arg_name == "match_overlap":
+        text = (
+            "🔗 *Step 4 / 5 — Matching coverage*\n\n"
+            "How many nearby frames each frame is matched against.\n"
+            "Higher = more connections between frames, better for complex scenes.\n\n"
+            "• *3* — Minimal (fast)\n"
+            "• *5* — Standard _(recommended)_\n"
+            "• *10* — Thorough (slower)"
+        )
+        markup = kb([[
+            ("3 — Minimal",   "w:arg:3"),
+            ("5 — Standard",  "w:arg:5"),
+            ("10 — Thorough", "w:arg:10"),
+        ]])
+    else:  # window_size for mast3r
+        text = (
+            "🪟 *Step 4 / 5 — Matching window*\n\n"
+            "Number of neighboring frames used in MASt3R's deep matching.\n"
+            "Larger window = better accuracy on hard scenes.\n\n"
+            "• *5* — Fast\n"
+            "• *10* — Standard _(recommended)_\n"
+            "• *20* — Thorough (slower)"
+        )
+        markup = kb([[
+            ("5 — Fast",      "w:arg:5"),
+            ("10 — Standard", "w:arg:10"),
+            ("20 — Thorough", "w:arg:20"),
+        ]])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
+async def ask_iterations(query, sess: dict):
+    sess["step"] = "iterations"
+    text = (
+        "🔁 *Step 5 / 5 — Training iterations*\n\n"
+        "How long to train the 3D Gaussian Splatting model.\n"
+        "More iterations = sharper, more detailed result.\n\n"
+        "• *3 000* — Quick preview (~20s)\n"
+        "• *7 000* — Standard _(recommended)_ (~1 min)\n"
+        "• *15 000* — High quality (~2 min)\n"
+        "• *30 000* — Ultra (~4 min)"
+    )
+    markup = kb([
+        [("3 000 — Preview",  "w:iterations:3000"),
+         ("7 000 — Standard", "w:iterations:7000")],
+        [("15 000 — High",    "w:iterations:15000"),
+         ("30 000 — Ultra",   "w:iterations:30000")],
+    ])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
+# ── Telegram handlers ─────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 *Video → 3D Gaussian Splatting*\n\n"
-        "Send me a video and I'll turn it into a 3D model you can view and download!\n\n"
+        "Send me a video and I'll guide you through the settings to create a 3D model!\n\n"
         "*I accept:*\n"
         "📹  A video file (up to 50 MB)\n"
         "🔗  A Google Drive share link\n"
         "🌐  Any direct video URL\n\n"
-        "Once ready you'll get a `.ply` download link you can open in "
-        "[SuperSplat](https://supersplat.xyz) or any 3DGS viewer.",
+        "Open the result at [supersplat.xyz](https://supersplat.xyz) — just drag and drop.",
         parse_mode="Markdown",
         disable_web_page_preview=True,
     )
 
 
-async def ask_backend(update: Update, video_url: str):
-    """Store the URL and ask the user which backend they want."""
-    pending[update.effective_user.id] = video_url
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🚀  Fast  (~2.5 min)",        callback_data="backend:fastmap"),
-            InlineKeyboardButton("🎯  Best Quality  (~6.5 min)", callback_data="backend:mast3r"),
-        ]
-    ])
-    await update.message.reply_text(
-        "✅ Got your video!\n\n"
-        "Which mode do you want?\n\n"
-        "• *Fast* — great quality, done in ~2.5 minutes\n"
-        "• *Best Quality* — deep AI matching, ~6.5 minutes",
-        parse_mode="Markdown",
-        reply_markup=kb,
-    )
-
-
 async def handle_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Handle direct video / document upload."""
     media = update.message.video or update.message.document
     if not media:
         await update.message.reply_text("❌ Couldn't read that file. Please try again.")
@@ -169,8 +279,8 @@ async def handle_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     size_mb = (media.file_size or 0) / 1_048_576
     if size_mb > 50:
         await update.message.reply_text(
-            f"⚠️ That file is {size_mb:.0f} MB — Telegram bots are limited to 50 MB downloads.\n\n"
-            "Please upload the video to Google Drive and send me the share link instead."
+            f"⚠️ That file is {size_mb:.0f} MB — Telegram bots max out at 50 MB.\n\n"
+            "Please upload to Google Drive and send me the share link instead."
         )
         return
 
@@ -181,114 +291,121 @@ async def handle_video(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await msg.edit_text("☁️ Uploading to cloud storage…")
     name    = getattr(media, "file_name", None) or "video.mp4"
     url     = await upload_to_s3(data, name)
-
     await msg.delete()
-    await ask_backend(update, url)
+
+    sessions[update.effective_user.id] = {"video_url": url}
+    await ask_backend(update.message, update.effective_user.id)
 
 
 async def handle_text(update: Update, _: ContextTypes.DEFAULT_TYPE):
-    """Handle Google Drive links and direct video URLs."""
     text = update.message.text.strip()
 
     url = extract_gdrive_url(text)
+    if not url:
+        if text.lower().startswith(("http://", "https://")):
+            url = text
     if url:
-        await ask_backend(update, url)
-        return
-
-    if text.lower().startswith(("http://", "https://")):
-        await ask_backend(update, text)
+        sessions[update.effective_user.id] = {"video_url": url}
+        await ask_backend(update.message, update.effective_user.id)
         return
 
     await update.message.reply_text(
         "🤔 I didn't recognise that.\n\n"
-        "Please send:\n"
-        "• A video file\n"
-        "• A Google Drive share link\n"
-        "• A direct video URL\n\n"
+        "Please send a video file, a Google Drive link, or a direct video URL.\n"
         "Type /start to see the instructions again."
     )
 
 
-async def handle_backend_choice(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Inline-keyboard callback: backend chosen → submit job."""
-    query = update.callback_query
+async def handle_wizard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Single callback handler for all wizard steps (callback_data starts with 'w:')."""
+    query   = update.callback_query
     await query.answer()
 
-    user_id   = update.effective_user.id
-    video_url = pending.pop(user_id, None)
-    if not video_url:
+    user_id = update.effective_user.id
+    sess    = sessions.get(user_id)
+    if not sess:
         await query.edit_message_text("❌ Session expired. Please send your video again.")
         return
 
-    backend = query.data.split(":")[1]   # "fastmap" or "mast3r"
-    label   = "Fast (fastmap)" if backend == "fastmap" else "Best Quality (mast3r)"
+    _, step, value = query.data.split(":", 2)
 
-    await query.edit_message_text(
-        f"⏳ Queuing your job on a GPU… ({label})\n"
-        "I'll update this message as it progresses."
-    )
+    if step == "backend":
+        sess["backend"]  = value
+        sess["arg_name"] = BACKEND_INFO[value]["arg_name"]
+        await ask_fps(query, sess)
 
-    # Run job in background so the handler returns immediately
-    ctx.application.create_task(
-        _run_job(query, video_url, backend, label),
-        update=update,
-    )
+    elif step == "fps":
+        sess["fps"] = int(value)
+        await ask_resolution(query, sess)
 
+    elif step == "resolution":
+        sess["resolution"] = int(value)
+        await ask_backend_arg(query, sess)
 
-async def _run_job(query, video_url: str, backend: str, label: str):
-    """Submit → poll → reply. Runs as a background task."""
-    try:
-        job_id = await runpod_submit(video_url, backend)
+    elif step == "arg":
+        sess["arg_value"] = int(value)
+        await ask_iterations(query, sess)
+
+    elif step == "iterations":
+        sess["iterations"] = int(value)
+        # All settings collected — confirm and submit
         await query.edit_message_text(
-            f"🔄 Processing on GPU… ({label})\n"
-            f"Job ID: `{job_id}`\n\n"
-            "_This usually takes 2–7 minutes. Hang tight!_",
+            f"✅ *All set! Submitting your job…*\n\n{session_summary(sess)}",
+            parse_mode="Markdown",
+        )
+        ctx.application.create_task(
+            _run_job(query, sess.copy()),
+            update=update,
+        )
+        sessions.pop(user_id, None)
+
+
+async def _run_job(query, sess: dict):
+    try:
+        job_id = await runpod_submit(sess)
+        backend_label = BACKEND_INFO.get(sess["backend"], {}).get("label", sess["backend"])
+        await query.edit_message_text(
+            f"🔄 *Processing on GPU…*\n\n"
+            f"{session_summary(sess)}"
+            f"\n_Job ID: `{job_id}`_\n"
+            f"_I'll update this message when it's done._",
             parse_mode="Markdown",
         )
 
         result = await runpod_poll(job_id)
 
         if result["status"] == "COMPLETED":
-            out      = result.get("output", {})
-            timings  = out.get("timings", {})
-            ply_url  = out.get("ply_url", "")
-            ply_mb   = out.get("ply_size_mb", 0)
-            total    = timings.get("total", 0)
-            frames   = timings.get("frame_extraction", 0)
-            feat_ext = timings.get("feature_extraction", 0)
-            feat_mat = timings.get("feature_matching", 0)
-            sfm      = timings.get("sfm_reconstruction", 0)
-            undist   = timings.get("undistortion", 0)
-            train    = timings.get("training", 0)
+            out     = result.get("output", {})
+            t       = out.get("timings", {})
+            ply_url = out.get("ply_url", "")
+            ply_mb  = out.get("ply_size_mb", 0)
 
-            def row(label, secs):
-                return f"  {label}: {fmt_time(secs)}\n" if secs > 0 else ""
+            def row(label, key):
+                v = t.get(key, 0)
+                return f"  {label}: {fmt_time(v)}\n" if v > 0 else ""
 
-            text = (
-                f"🎉 *Your 3D model is ready!*\n\n"
-                f"⏱ *Timings:*\n"
-                + row("Frame extraction", frames)
-                + row("Feature extraction", feat_ext)
-                + row("Feature matching", feat_mat)
-                + row("SfM reconstruction", sfm)
-                + row("Undistortion", undist)
-                + row("3DGS training", train)
-                + f"  *Total: {fmt_time(total)}*\n\n"
-                f"📦 *File size:* {ply_mb:.1f} MB\n\n"
-                f"⬇️ *Download your `.ply`:*\n"
-                f"{ply_url}\n\n"
-                f"_Link valid for 24 hours._\n"
-                f"_Open at_ [supersplat.xyz](https://supersplat.xyz) _→ drag & drop the file_"
+            timings_str = (
+                row("Frame extraction",   "frame_extraction")
+                + row("Feature extraction", "feature_extraction")
+                + row("Feature matching",   "feature_matching")
+                + row("SfM reconstruction", "sfm_reconstruction")
+                + row("Undistortion",       "undistortion")
+                + row("3DGS training",      "training")
+                + f"  *Total: {fmt_time(t.get('total', 0))}*"
             )
+
             await query.edit_message_text(
-                text,
+                f"🎉 *Your 3D model is ready!*\n\n"
+                f"⏱ *Timings:*\n{timings_str}\n\n"
+                f"📦 *File size:* {ply_mb:.1f} MB\n\n"
+                f"⬇️ *Download your `.ply`:*\n{ply_url}\n\n"
+                f"_Link valid 24 h — open at_ [supersplat.xyz](https://supersplat.xyz)",
                 parse_mode="Markdown",
                 disable_web_page_preview=True,
             )
         else:
             err = str(result.get("error", "Unknown error"))
-            # Show last 400 chars of error (usually the most relevant part)
-            snippet = err[-400:].strip() if len(err) > 400 else err.strip()
+            snippet = err[-400:].strip()
             await query.edit_message_text(
                 f"❌ *Processing failed.*\n\n```\n{snippet}\n```",
                 parse_mode="Markdown",
@@ -306,18 +423,16 @@ def main():
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help",  cmd_start))
-
-    # Video files sent as compressed video or as document
     app.add_handler(MessageHandler(
-        filters.VIDEO | filters.Document.MimeType("video/mp4")
-            | filters.Document.MimeType("video/quicktime")
-            | filters.Document.MimeType("video/x-msvideo")
-            | filters.Document.MimeType("video/x-matroska"),
+        filters.VIDEO
+        | filters.Document.MimeType("video/mp4")
+        | filters.Document.MimeType("video/quicktime")
+        | filters.Document.MimeType("video/x-msvideo")
+        | filters.Document.MimeType("video/x-matroska"),
         handle_video,
     ))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(CallbackQueryHandler(handle_backend_choice, pattern=r"^backend:"))
+    app.add_handler(CallbackQueryHandler(handle_wizard, pattern=r"^w:"))
 
     logger.info("Bot starting…")
     app.run_polling(drop_pending_updates=True)
