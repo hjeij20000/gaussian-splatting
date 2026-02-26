@@ -1,0 +1,3 @@
+python-telegram-bot[webhooks]==21.9
+boto3==1.34.144
+aiohttp==3.11.11
