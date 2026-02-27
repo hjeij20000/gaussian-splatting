@@ -26,14 +26,16 @@ Full pipeline: download video → extract frames → SfM reconstruction → 3DGS
 
 ## Docker Image (RunPod serverless)
 - **Docker Hub:** `hjeij2000/video-to-3dgs:serverless`
-- **Latest versioned tag:** `:v8` 🔄 building now (2026-02-27)
+- **Latest versioned tag:** `:v8` ✅ (2026-02-27)
   - CUDA 12.4.1 base (was 12.8.1 — caused container start failure on some RTX 4090 nodes with driver <570)
   - torch 2.6.0+cu124 (was 2.7.0+cu128)
-  - stderr deadlock fix in handler.py
+  - stderr deadlock fix in handler.py (fixes stuck WORKING worker)
   - torch seeds added to hloc + mast3r for reproducibility
+  - digest: `sha256:565f9e6b90d7b9f0234d2b7d0e8403e8395822cdec9aa1acf7594647f253e103`
 - **Previous:** `:v7` ✅ (2026-02-27, handler.py S3 botocore Config fix)
-  - digest: `sha256:72232dc486d01f37486059bb710fcabe4a9ffc5a3736be051b4630c807421299`
-- **Last built:** 2026-02-27 (image size: 25.6GB, ~90 min build)
+- **Last built:** 2026-02-27 (image size: 21.3GB, ~90 min build)
+- **RunPod template:** Updated to `:v8` ✅ (template `mrgxwb470f`)
+- **Local image status:** ✅ Removed (disk freed)
 - **Local image status:** ✅ Removed (already on Docker Hub, disk freed)
 - **RunPod template:** Updated to `:v7` ✅ (template `mrgxwb470f`)
 - **Build command (RELIABLE — use this):**
@@ -161,7 +163,8 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY='...' \
 - **Bug: stderr pipe deadlock** — handler.py used `stderr=PIPE` but never drained it while reading stdout. COLMAP stderr fills 64KB OS buffer → subprocess blocks → handler hangs → worker stuck WORKING. Fix: redirect stderr to file in work_dir.
 - **Bug: result inconsistency** — added `torch.manual_seed(42)` to hloc_sfm.py and mast3r_sfm.py to reduce non-determinism in deep learning feature matching
 - **Bug: broken presigned URL** — Telegram Markdown V1 ate underscores in URL (`export_3000`→`export3000`, `aws4_request`→`aws4request`). Fix: removed `parse_mode="Markdown"` from URL-containing messages in bot.py ✅ (deployed, Railway redeploy needed)
-- **:v8 build in progress:** CUDA 12.4.1, torch 2.6.0+cu124, all fixes above
+- **:v8 deployed:** CUDA 12.4.1, torch 2.6.0+cu124, all fixes above ✅
+- Workers restored: workersMin=1, workersMax=2
 
 ### Session 8 (2026-02-27) — PLY delivery fix + stale worker resolved ✅ COMPLETE
 - **PLY delivery (UX fix):** Bot now sends `.ply` as a Telegram file attachment (`bot.send_document()`) instead of a presigned S3 link — non-technical users couldn't handle the bare URL. Files ≤45 MB sent directly; fallback to link for larger.
