@@ -33,6 +33,10 @@ def run_hloc_sfm(image_dir: Path, output_dir: Path,
         feature_conf:   hloc feature extractor config name.
         matcher_conf:   hloc matcher config name.
     """
+    import torch
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
+
     from hloc import extract_features, match_features, reconstruction
     import pycolmap
 

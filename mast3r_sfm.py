@@ -33,6 +33,8 @@ def run_sfm(image_dir: Path, output_dir: Path, model_name: str, device: str,
             mapper: str = 'glomap', glomap_bin: str = '/home/ibrahim/local/bin/glomap'):
 
     import torch
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
     import pycolmap
     from kapture.converter.colmap.database_extra import kapture_to_colmap
     from kapture.converter.colmap.database import COLMAPDatabase
