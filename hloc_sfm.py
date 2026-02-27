@@ -98,6 +98,7 @@ def run_hloc_sfm(image_dir: Path, output_dir: Path,
 
     print(f"[hloc] Registered {len(recon.images)} / {len(image_names)} images")
     print(f"[hloc] {len(recon.points3D)} 3D points")
+    print(f"[SFM_RESULT] registered={len(recon.images)} total={len(image_names)} points3d={len(recon.points3D)}")
 
     # ── 5. Write COLMAP binary format to output_dir ─────────────────────────
     recon.write_binary(str(output_dir))

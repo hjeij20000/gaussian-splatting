@@ -147,6 +147,7 @@ def run_sfm(image_dir: Path, output_dir: Path, model_name: str, device: str,
         recon = pycolmap.Reconstruction(str(recon_model_path))
 
     print(f"[MASt3R] {recon.summary()}")
+    print(f"[SFM_RESULT] registered={len(recon.images)} total={len(image_files)} points3d={len(recon.points3D)}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     for f in recon_model_path.iterdir():

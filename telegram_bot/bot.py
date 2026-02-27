@@ -396,11 +396,13 @@ async def _run_job(query, sess: dict):
             result = await runpod_poll(job_id)
 
         if result["status"] == "COMPLETED":
-            out     = result.get("output", {})
-            t       = out.get("timings", {})
-            ply_url = out.get("ply_url", "")
-            ply_mb  = out.get("ply_size_mb", 0)
-            job_id  = out.get("job_id", "model")
+            out         = result.get("output", {})
+            t           = out.get("timings", {})
+            ply_url     = out.get("ply_url", "")
+            ply_mb      = out.get("ply_size_mb", 0)
+            splat_count = out.get("splat_count", 0)
+            sfm         = out.get("sfm_result", {})
+            job_id      = out.get("job_id", "model")
 
             def row(label, key):
                 v = t.get(key, 0)
@@ -416,9 +418,19 @@ async def _run_job(query, sess: dict):
                 + f"  *Total: {fmt_time(t.get('total', 0))}*"
             )
 
+            sfm_str = ""
+            if sfm:
+                sfm_str = (
+                    f"\n\n📐 *SfM:* {sfm['registered']}/{sfm['total']} images registered"
+                    f" · {sfm['points3d']:,} 3D points"
+                )
+            splat_str = f"\n✨ *Splats:* {splat_count:,}" if splat_count else ""
+
             await send(
                 f"🎉 *Your 3D model is ready!*\n\n"
-                f"⏱ *Timings:*\n{timings_str}\n\n"
+                f"⏱ *Timings:*\n{timings_str}"
+                f"{sfm_str}"
+                f"{splat_str}\n\n"
                 f"📦 *File size:* {ply_mb:.1f} MB",
                 parse_mode="Markdown",
             )

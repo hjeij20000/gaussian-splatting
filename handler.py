@@ -142,6 +142,29 @@ def upload_to_s3(local_path: str, s3_key: str) -> str:
     return url
 
 
+def parse_sfm_result(stdout: str) -> dict:
+    """Parse [SFM_RESULT] line: registered=N total=M points3d=P"""
+    m = re.search(r"\[SFM_RESULT\] registered=(\d+) total=(\d+) points3d=(\d+)", stdout)
+    if m:
+        return {"registered": int(m.group(1)), "total": int(m.group(2)), "points3d": int(m.group(3))}
+    return {}
+
+
+def count_ply_splats(ply_path: str) -> int:
+    """Read PLY header to get vertex count (= number of Gaussian splats)."""
+    try:
+        with open(ply_path, "rb") as f:
+            for line in f:
+                line = line.decode("ascii", errors="ignore").strip()
+                if line.startswith("element vertex"):
+                    return int(line.split()[-1])
+                if line == "end_header":
+                    break
+    except Exception:
+        pass
+    return 0
+
+
 def parse_timings(stdout: str) -> dict:
     """Parse the timing summary block printed by video_to_3dgs.py."""
     patterns = {
@@ -308,10 +331,12 @@ def handler(job):
             return {"error": f"PLY not found at {ply_path}.", "gpu": gpu_info}
 
         ply_size_mb = os.path.getsize(ply_path) / 1e6
-        print(f"[handler] PLY size: {ply_size_mb:.1f} MB")
+        splat_count = count_ply_splats(ply_path)
+        print(f"[handler] PLY size: {ply_size_mb:.1f} MB | splats: {splat_count:,}")
 
         # ── 5. Parse & log timing summary ────────────────────────────────────
         timings = parse_timings(stdout)
+        sfm_result = parse_sfm_result(stdout)
         print(format_timings_summary(timings))
 
         # ── 6. Write timings.txt ──────────────────────────────────────────────
@@ -357,6 +382,8 @@ def handler(job):
             "ply_url":      ply_url,
             "timings_url":  timings_url,
             "ply_size_mb":  round(ply_size_mb, 1),
+            "splat_count":  splat_count,
+            "sfm_result":   sfm_result,
             "job_id":       job_id,
             "gpu":          gpu_info,
             "timings":      timings,

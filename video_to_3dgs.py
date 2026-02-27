@@ -85,6 +85,7 @@ def run_command(cmd, description, cwd=None):
     env.pop("QT_PLUGIN_PATH", None)
     env["QT_QPA_PLATFORM"] = "offscreen"
     env.setdefault("XDG_RUNTIME_DIR", "/tmp")
+    env["RUST_BACKTRACE"] = "1"
 
     start_time = time.time()
     result = subprocess.run(cmd, cwd=cwd, env=env)
@@ -342,6 +343,16 @@ def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool 
     if not model_path.exists():
         model_path = model_dirs[0]
 
+    # Print standardised SfM result for fastmap/colmap (hloc/mast3r print their own)
+    if sfm_backend in ('fastmap', 'colmap'):
+        try:
+            import pycolmap
+            recon = pycolmap.Reconstruction(str(model_path))
+            n_images = len(list(input_dir.glob("*")))
+            print(f"[SFM_RESULT] registered={len(recon.images)} total={n_images} points3d={len(recon.points3D)}")
+        except Exception:
+            pass
+
     print(f"[INFO] Using {sfm_backend} model: {model_path}")
     return model_path, timings
 
@@ -392,6 +403,7 @@ def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: in
         "brush", str(project_dir),
         "--total-steps", str(iterations),
         "--max-resolution", str(max_resolution),
+        "--seed", "42",
         "--export-path", str(output_dir),
         "--export-name", "export_{iter}.ply",
         "--export-every", str(iterations),
