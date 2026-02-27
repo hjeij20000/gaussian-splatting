@@ -26,9 +26,13 @@ Full pipeline: download video → extract frames → SfM reconstruction → 3DGS
 
 ## Docker Image (RunPod serverless)
 - **Docker Hub:** `hjeij2000/video-to-3dgs:serverless`
-- **Latest versioned tag:** `:v7` ✅ (2026-02-27, handler.py S3 botocore Config fix)
+- **Latest versioned tag:** `:v8` 🔄 building now (2026-02-27)
+  - CUDA 12.4.1 base (was 12.8.1 — caused container start failure on some RTX 4090 nodes with driver <570)
+  - torch 2.6.0+cu124 (was 2.7.0+cu128)
+  - stderr deadlock fix in handler.py
+  - torch seeds added to hloc + mast3r for reproducibility
+- **Previous:** `:v7` ✅ (2026-02-27, handler.py S3 botocore Config fix)
   - digest: `sha256:72232dc486d01f37486059bb710fcabe4a9ffc5a3736be051b4630c807421299`
-- **Previous:** `:v6` (2026-02-26, fixed entrypoint + added libopenblas for mast3r)
 - **Last built:** 2026-02-27 (image size: 25.6GB, ~90 min build)
 - **Local image status:** ✅ Removed (already on Docker Hub, disk freed)
 - **RunPod template:** Updated to `:v7` ✅ (template `mrgxwb470f`)
@@ -150,6 +154,14 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY='...' \
 ---
 
 ## Session Log
+
+### Session 9 (2026-02-27) — Bug hunt + :v8 build 🔄 IN PROGRESS
+- **Workers force-stopped:** set workersMin=0, workersMax=0 via API (stuck worker + CUDA error)
+- **Bug: container start failure** — `cuda>=12.8` requirement not met on some RTX 4090 nodes (driver <570). Fix: downgrade base to `cuda:12.4.1` (requires driver ≥550, much more compatible)
+- **Bug: stderr pipe deadlock** — handler.py used `stderr=PIPE` but never drained it while reading stdout. COLMAP stderr fills 64KB OS buffer → subprocess blocks → handler hangs → worker stuck WORKING. Fix: redirect stderr to file in work_dir.
+- **Bug: result inconsistency** — added `torch.manual_seed(42)` to hloc_sfm.py and mast3r_sfm.py to reduce non-determinism in deep learning feature matching
+- **Bug: broken presigned URL** — Telegram Markdown V1 ate underscores in URL (`export_3000`→`export3000`, `aws4_request`→`aws4request`). Fix: removed `parse_mode="Markdown"` from URL-containing messages in bot.py ✅ (deployed, Railway redeploy needed)
+- **:v8 build in progress:** CUDA 12.4.1, torch 2.6.0+cu124, all fixes above
 
 ### Session 8 (2026-02-27) — PLY delivery fix + stale worker resolved ✅ COMPLETE
 - **PLY delivery (UX fix):** Bot now sends `.ply` as a Telegram file attachment (`bot.send_document()`) instead of a presigned S3 link — non-technical users couldn't handle the bare URL. Files ≤45 MB sent directly; fallback to link for larger.
@@ -309,6 +321,22 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY='...' \
 ### 12. Telegram Markdown parse error (bot) ✅ FIXED
 - **Error:** Markdown V1 parse error when arg name contains underscores (e.g. `match_overlap`)
 - **Fix (`bot.py`):** Replace underscores with spaces before embedding in Markdown strings
+
+### 14. Container start failure on RTX 4090 nodes with old drivers ✅ FIXED in :v8
+- **Error:** `cuda>=12.8, please update your driver` — some RTX 4090 datacenter nodes have driver <570
+- **Fix (Dockerfile):** Downgrade base from `cuda:12.8.1` → `cuda:12.4.1` (requires driver ≥550)
+- **Also:** torch 2.7.0+cu128 → 2.6.0+cu124, dropped `10.0+PTX` from TORCH_CUDA_ARCH_LIST
+
+### 15. Handler stderr pipe deadlock (stuck worker) ✅ FIXED in :v8
+- **Error:** Worker stays in WORKING state indefinitely even with no active jobs
+- **Cause:** `subprocess.Popen(stderr=PIPE)` — handler reads stdout line-by-line but never drains stderr. COLMAP/Brush fill the 64KB OS pipe buffer → subprocess blocks → handler deadlocks in `for line in proc.stdout` → never returns → RunPod worker stuck WORKING forever
+- **Fix (handler.py):** Redirect stderr to a temp file in work_dir instead of PIPE
+
+### 16. Result inconsistency across runs ⚠️ PARTIALLY FIXED in :v8
+- **Symptom:** Same input + same settings → different PLY size and quality
+- **Causes:** (1) PyTorch non-determinism in hloc LightGlue + MASt3R inference; (2) different GPU hardware across workers; (3) COLMAP RANSAC (already seeded at 0)
+- **Fix:** Added `torch.manual_seed(42)` + `torch.cuda.manual_seed_all(42)` to hloc_sfm.py and mast3r_sfm.py
+- **Remaining variation:** Cross-GPU hardware float differences (unfixable in software)
 
 ### 13. Bot tasks silently dropped ✅ FIXED
 - **Error:** Job polling coroutine dropped — bot showed "submitted" but never sent result
