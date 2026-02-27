@@ -395,8 +395,11 @@ def undistort_images(project_dir: Path):
 
 def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: int = 30000,
                              max_resolution: int = 1920):
-    """Train the 3D Gaussian Splatting model using Brush."""
+    """Train the 3D Gaussian Splatting model using Brush.
 
+    Retries up to 3 times on SIGSEGV (-11), which is a Vulkan init race on some
+    RunPod nodes. A short sleep between attempts lets the GPU settle.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -408,8 +411,49 @@ def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: in
         "--export-name", "export_{iter}.ply",
         "--export-every", str(iterations),
     ]
-    elapsed = run_command(cmd, f"Training 3DGS model with Brush ({iterations} steps)")
-    return elapsed
+
+    description = f"Training 3DGS model with Brush ({iterations} steps)"
+    max_attempts = 3
+
+    env = os.environ.copy()
+    env.pop("QT_PLUGIN_PATH", None)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env.setdefault("XDG_RUNTIME_DIR", "/tmp")
+    env["RUST_BACKTRACE"] = "1"
+
+    for attempt in range(1, max_attempts + 1):
+        print(f"\n{'='*60}")
+        if attempt > 1:
+            print(f"[STEP] {description} (attempt {attempt}/{max_attempts})")
+        else:
+            print(f"[STEP] {description}")
+        print(f"{'='*60}")
+        print(f"Command: {' '.join(cmd)}\n")
+
+        # Brief pause before Brush to let the GPU settle after CUDA/SfM work.
+        # The -11 SIGSEGV is a Vulkan init race condition on some RunPod nodes.
+        settle_sleep = 5 * attempt  # 5s, 10s, 15s
+        print(f"[Brush] Waiting {settle_sleep}s for GPU to settle before Vulkan init...")
+        time.sleep(settle_sleep)
+
+        start_time = time.time()
+        result = subprocess.run(cmd, env=env)
+        elapsed_time = time.time() - start_time
+
+        if result.returncode == 0:
+            minutes = int(elapsed_time // 60)
+            seconds = elapsed_time % 60
+            print(f"[OK] {description} completed successfully")
+            print(f"[TIME] Elapsed: {minutes}m {seconds:.2f}s ({elapsed_time:.2f}s total)")
+            return elapsed_time
+
+        if result.returncode == -11 and attempt < max_attempts:
+            print(f"[WARN] Brush exited with -11 (Vulkan SIGSEGV) on attempt {attempt}. Retrying...")
+            continue
+
+        # Non-retriable failure or all attempts exhausted
+        print(f"[ERROR] {description} failed with code {result.returncode}")
+        sys.exit(1)
 
 
 def main():
