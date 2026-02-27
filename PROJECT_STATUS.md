@@ -26,7 +26,7 @@ Full pipeline: download video → extract frames → SfM reconstruction → 3DGS
 
 ## Docker Image (RunPod serverless)
 - **Docker Hub:** `hjeij2000/video-to-3dgs:serverless`
-- **Latest versioned tag:** `:v9` 🔄 building now (2026-02-27)
+- **Latest versioned tag:** `:v9` ✅ (2026-02-27)
   - SfM registration stats + splat count in bot output
   - RUST_BACKTRACE=1 for all commands (stack trace on Brush -11)
   - Explicit `--seed 42` on Brush command
@@ -38,10 +38,8 @@ Full pipeline: download video → extract frames → SfM reconstruction → 3DGS
   - digest: `sha256:565f9e6b90d7b9f0234d2b7d0e8403e8395822cdec9aa1acf7594647f253e103`
 - **Previous:** `:v7` ✅ (2026-02-27, handler.py S3 botocore Config fix)
 - **Last built:** 2026-02-27 (image size: 21.3GB, ~90 min build)
-- **RunPod template:** Updated to `:v8` ✅ (template `mrgxwb470f`)
-- **Local image status:** ✅ Removed (disk freed)
-- **Local image status:** ✅ Removed (already on Docker Hub, disk freed)
-- **RunPod template:** Updated to `:v7` ✅ (template `mrgxwb470f`)
+- **RunPod template:** Updated to `:v9` ✅ (template `mrgxwb470f`)
+- **Local image status:** ✅ Removed (disk freed, 35GB build cache also pruned)
 - **Build command (RELIABLE — use this):**
   ```bash
   # Step 1: Build with default docker builder (has network access, no DNS issues)
