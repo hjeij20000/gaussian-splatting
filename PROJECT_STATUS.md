@@ -26,7 +26,11 @@ Full pipeline: download video → extract frames → SfM reconstruction → 3DGS
 
 ## Docker Image (RunPod serverless)
 - **Docker Hub:** `hjeij2000/video-to-3dgs:serverless`
-- **Latest versioned tag:** `:v8` ✅ (2026-02-27)
+- **Latest versioned tag:** `:v9` 🔄 building now (2026-02-27)
+  - SfM registration stats + splat count in bot output
+  - RUST_BACKTRACE=1 for all commands (stack trace on Brush -11)
+  - Explicit `--seed 42` on Brush command
+- **Previous:** `:v8` ✅ (2026-02-27)
   - CUDA 12.4.1 base (was 12.8.1 — caused container start failure on some RTX 4090 nodes with driver <570)
   - torch 2.6.0+cu124 (was 2.7.0+cu128)
   - stderr deadlock fix in handler.py (fixes stuck WORKING worker)
@@ -156,6 +160,14 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY='...' \
 ---
 
 ## Session Log
+
+### Session 10 (2026-02-27) — SfM stats, splat count, Brush diagnostics 🔄 IN PROGRESS
+- **Auto-retry on Brush -11:** bot.py retries job once silently before reporting failure
+- **SfM stats in bot output:** registered/total images + 3D point count (all backends)
+- **Splat count in bot output:** reads PLY header vertex count
+- **RUST_BACKTRACE=1:** added to run_command env — next -11 will give a real stack trace
+- **Brush --seed 42:** explicit seed for reproducibility
+- **:v9 build in progress**
 
 ### Session 9 (2026-02-27) — Bug hunt + :v8 build 🔄 IN PROGRESS
 - **Workers force-stopped:** set workersMin=0, workersMax=0 via API (stuck worker + CUDA error)
