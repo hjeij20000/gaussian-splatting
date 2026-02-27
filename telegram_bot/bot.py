@@ -7,6 +7,7 @@ Wizard flow:
 """
 
 import asyncio
+import io
 import logging
 import os
 import re
@@ -390,6 +391,7 @@ async def _run_job(query, sess: dict):
             t       = out.get("timings", {})
             ply_url = out.get("ply_url", "")
             ply_mb  = out.get("ply_size_mb", 0)
+            job_id  = out.get("job_id", "model")
 
             def row(label, key):
                 v = t.get(key, 0)
@@ -408,12 +410,41 @@ async def _run_job(query, sess: dict):
             await send(
                 f"🎉 *Your 3D model is ready!*\n\n"
                 f"⏱ *Timings:*\n{timings_str}\n\n"
-                f"📦 *File size:* {ply_mb:.1f} MB\n\n"
-                f"⬇️ *Download your `.ply`:*\n{ply_url}\n\n"
-                f"_Link valid 24 h — open at_ [supersplat.xyz](https://supersplat.xyz)",
+                f"📦 *File size:* {ply_mb:.1f} MB",
                 parse_mode="Markdown",
-                disable_web_page_preview=True,
             )
+
+            # Send PLY as a Telegram file (≤45 MB), fall back to link above that
+            if ply_url and ply_mb <= 45:
+                notify = await send("⬇️ Preparing your file…")
+                try:
+                    async with aiohttp.ClientSession(headers=NO_BR) as s:
+                        async with s.get(ply_url) as r:
+                            ply_bytes = await r.read()
+                    await bot.send_document(
+                        chat_id,
+                        document=io.BytesIO(ply_bytes),
+                        filename=f"model_{job_id[:8]}.ply",
+                        caption=(
+                            "🌐 Drag and drop into [supersplat.xyz](https://supersplat.xyz) to view in 3D!"
+                        ),
+                        parse_mode="Markdown",
+                    )
+                    await notify.delete()
+                except Exception as e:
+                    logger.warning("Could not send PLY as file: %s", e)
+                    await notify.edit_text(
+                        f"⬇️ *Download your `.ply`:*\n{ply_url}\n\n_Link valid 24h_",
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True,
+                    )
+            else:
+                await send(
+                    f"⬇️ *Download your `.ply`:*\n{ply_url}\n\n"
+                    f"_Link valid 24h — open at_ [supersplat.xyz](https://supersplat.xyz)",
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True,
+                )
         else:
             err     = str(result.get("error", "Unknown error"))
             snippet = err[-400:].strip()
