@@ -17,13 +17,13 @@
 # =============================================================================
 # Stage 1 — builder: compile all CUDA extensions
 # =============================================================================
-FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # All NVIDIA GPU generations from Pascal (GTX 10xx) through Blackwell (B200)
 # +PTX at the end enables JIT compilation for future architectures
-ENV TORCH_CUDA_ARCH_LIST="6.1 7.0 7.5 8.0 8.6 8.9 9.0 10.0+PTX"
+ENV TORCH_CUDA_ARCH_LIST="6.1 7.0 7.5 8.0 8.6 8.9 9.0+PTX"
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH="${CUDA_HOME}/bin:${PATH}"
 
@@ -38,8 +38,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── PyTorch — cu128 supports sm_60+ (Pascal and up) ───────────────────────
 RUN pip3 install --no-cache-dir \
-        torch==2.7.0 torchvision==0.22.0 \
-        --index-url https://download.pytorch.org/whl/cu128
+        torch==2.6.0 torchvision==0.21.0 \
+        --index-url https://download.pytorch.org/whl/cu124
 
 # ── 3DGS CUDA extensions ───────────────────────────────────────────────────
 # Copy submodules first (heaviest cached layer)
@@ -59,7 +59,7 @@ RUN cd /app/fastmap && pip3 install --no-cache-dir --no-build-isolation .
 # =============================================================================
 # Stage 2 — runtime: lean image with everything needed to run
 # =============================================================================
-FROM nvidia/cuda:12.8.1-runtime-ubuntu22.04
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CUDA_HOME=/usr/local/cuda

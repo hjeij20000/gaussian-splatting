@@ -183,37 +183,46 @@ def format_timings_summary(timings: dict) -> str:
     return "\n".join(lines)
 
 
-def run_pipeline_with_progress(job, cmd, gpu_info: str, job_start: float):
+def run_pipeline_with_progress(job, cmd, gpu_info: str, job_start: float, work_dir: str):
     """
     Run the pipeline subprocess, streaming stdout line-by-line.
     Sends a progress_update to RunPod whenever a [STEP] marker is detected.
     Returns (returncode, stdout_str, stderr_str).
+
+    stderr is redirected to a file to avoid the classic pipe deadlock:
+    if the subprocess fills the 64 KB stderr OS pipe buffer, it blocks
+    and can no longer write to stdout either — causing the handler to hang
+    forever waiting for stdout, leaving the RunPod worker stuck in WORKING.
     """
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
+    stderr_path = os.path.join(work_dir, "stderr.txt")
+    with open(stderr_path, "w") as stderr_file:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=stderr_file,
+            text=True,
+            bufsize=1,
+        )
 
-    stdout_lines = []
-    for line in proc.stdout:
-        stdout_lines.append(line)
-        stripped = line.strip()
-        if stripped.startswith("[STEP]"):
-            step_text = stripped[6:].strip()
-            elapsed = time.time() - job_start
-            for fragment, step_num, label in _STEP_MAP:
-                if fragment.lower() in step_text.lower():
-                    msg = f"[{step_num}] {label} — {elapsed:.0f}s elapsed | {gpu_info}"
-                    runpod.serverless.progress_update(job, msg)
-                    print(f"[handler] Progress: {msg}")
-                    break
+        stdout_lines = []
+        for line in proc.stdout:
+            stdout_lines.append(line)
+            stripped = line.strip()
+            if stripped.startswith("[STEP]"):
+                step_text = stripped[6:].strip()
+                elapsed = time.time() - job_start
+                for fragment, step_num, label in _STEP_MAP:
+                    if fragment.lower() in step_text.lower():
+                        msg = f"[{step_num}] {label} — {elapsed:.0f}s elapsed | {gpu_info}"
+                        runpod.serverless.progress_update(job, msg)
+                        print(f"[handler] Progress: {msg}")
+                        break
 
-    proc.wait()
+        proc.wait()
+
     stdout = "".join(stdout_lines)
-    stderr = proc.stderr.read()
+    with open(stderr_path) as f:
+        stderr = f.read()
     return proc.returncode, stdout, stderr
 
 
@@ -282,7 +291,7 @@ def handler(job):
                  f"{iterations} iters, {max_resolution}px) | {gpu_info}"
         )
         returncode, stdout, stderr = run_pipeline_with_progress(
-            job, cmd, gpu_info, job_start
+            job, cmd, gpu_info, job_start, work_dir
         )
         print(stdout[-3000:])
 
