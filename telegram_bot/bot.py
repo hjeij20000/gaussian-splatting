@@ -386,6 +386,15 @@ async def _run_job(query, sess: dict):
 
         result = await runpod_poll(job_id)
 
+        # Auto-retry once on GPU crash (-11 SIGSEGV = Vulkan init failure on some nodes)
+        if result["status"] == "FAILED" and "-11" in str(result.get("error", "")):
+            logger.warning("Brush -11 on job %s, retrying once...", job_id)
+            await status_msg.edit_text(
+                "⚠️ GPU hiccup detected, retrying automatically…",
+            )
+            job_id = await runpod_submit(sess)
+            result = await runpod_poll(job_id)
+
         if result["status"] == "COMPLETED":
             out     = result.get("output", {})
             t       = out.get("timings", {})
