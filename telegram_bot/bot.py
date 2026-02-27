@@ -434,15 +434,13 @@ async def _run_job(query, sess: dict):
                 except Exception as e:
                     logger.warning("Could not send PLY as file: %s", e)
                     await notify.edit_text(
-                        f"⬇️ *Download your `.ply`:*\n{ply_url}\n\n_Link valid 24h_",
-                        parse_mode="Markdown",
+                        f"⬇️ Download your .ply (link valid 24h):\n\n{ply_url}",
                         disable_web_page_preview=True,
                     )
             else:
                 await send(
-                    f"⬇️ *Download your `.ply`:*\n{ply_url}\n\n"
-                    f"_Link valid 24h — open at_ [supersplat.xyz](https://supersplat.xyz)",
-                    parse_mode="Markdown",
+                    f"⬇️ Download your .ply (link valid 24h):\n\n{ply_url}\n\n"
+                    f"Open at supersplat.xyz to view in 3D!",
                     disable_web_page_preview=True,
                 )
         else:
