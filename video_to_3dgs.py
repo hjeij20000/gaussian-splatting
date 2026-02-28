@@ -406,7 +406,6 @@ def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: in
         "brush", str(project_dir),
         "--total-steps", str(iterations),
         "--max-resolution", str(max_resolution),
-        "--seed", "42",
         "--export-path", str(output_dir),
         "--export-name", "export_{iter}.ply",
         "--export-every", str(iterations),
