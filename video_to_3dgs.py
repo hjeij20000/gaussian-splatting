@@ -85,7 +85,6 @@ def run_command(cmd, description, cwd=None):
     env.pop("QT_PLUGIN_PATH", None)
     env["QT_QPA_PLATFORM"] = "offscreen"
     env.setdefault("XDG_RUNTIME_DIR", "/tmp")
-    env["RUST_BACKTRACE"] = "1"
 
     start_time = time.time()
     result = subprocess.run(cmd, cwd=cwd, env=env)
@@ -418,7 +417,6 @@ def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: in
     env.pop("QT_PLUGIN_PATH", None)
     env["QT_QPA_PLATFORM"] = "offscreen"
     env.setdefault("XDG_RUNTIME_DIR", "/tmp")
-    env["RUST_BACKTRACE"] = "1"
 
     for attempt in range(1, max_attempts + 1):
         print(f"\n{'='*60}")
@@ -429,11 +427,11 @@ def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: in
         print(f"{'='*60}")
         print(f"Command: {' '.join(cmd)}\n")
 
-        # Brief pause before Brush to let the GPU settle after CUDA/SfM work.
-        # The -11 SIGSEGV is a Vulkan init race condition on some RunPod nodes.
-        settle_sleep = 5 * attempt  # 5s, 10s, 15s
-        print(f"[Brush] Waiting {settle_sleep}s for GPU to settle before Vulkan init...")
-        time.sleep(settle_sleep)
+        # On retries only: pause to let the GPU settle after a Vulkan crash.
+        if attempt > 1:
+            settle_sleep = 10 * (attempt - 1)  # 10s, 20s
+            print(f"[Brush] Waiting {settle_sleep}s for GPU to settle before retry...")
+            time.sleep(settle_sleep)
 
         start_time = time.time()
         result = subprocess.run(cmd, env=env)
