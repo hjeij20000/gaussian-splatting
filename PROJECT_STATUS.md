@@ -26,10 +26,10 @@ Full pipeline: download video → extract frames → SfM reconstruction → 3DGS
 
 ## Docker Image (RunPod serverless)
 - **Docker Hub:** `hjeij2000/video-to-3dgs:serverless`
-- **Latest versioned tag:** `:v9` ✅ (2026-02-27)
-  - SfM registration stats + splat count in bot output
-  - RUST_BACKTRACE=1 for all commands (stack trace on Brush -11)
-  - Explicit `--seed 42` on Brush command
+- **Latest versioned tag:** `:v10` ✅ (2026-02-28)
+  - **FIXED:** Removed `--seed 42` from Brush — was causing consistent Vulkan SIGSEGV (-11) by changing init timing
+  - Brush retry: up to 3 attempts on -11, with 5s/10s/15s GPU settle delay between attempts
+- **Previous:** `:v9` ⚠️ (2026-02-28, REGRESSED — `--seed 42` caused always-failing Brush)
 - **Previous:** `:v8` ✅ (2026-02-27)
   - CUDA 12.4.1 base (was 12.8.1 — caused container start failure on some RTX 4090 nodes with driver <570)
   - torch 2.6.0+cu124 (was 2.7.0+cu128)
@@ -37,9 +37,9 @@ Full pipeline: download video → extract frames → SfM reconstruction → 3DGS
   - torch seeds added to hloc + mast3r for reproducibility
   - digest: `sha256:565f9e6b90d7b9f0234d2b7d0e8403e8395822cdec9aa1acf7594647f253e103`
 - **Previous:** `:v7` ✅ (2026-02-27, handler.py S3 botocore Config fix)
-- **Last built:** 2026-02-27 (image size: 21.3GB, ~90 min build)
-- **RunPod template:** Updated to `:v9` ✅ (template `mrgxwb470f`)
-- **Local image status:** ✅ Removed (disk freed, 35GB build cache also pruned)
+- **Last built:** 2026-02-28 (image size: ~21GB, ~90 min build)
+- **RunPod template:** Updated to `:v10` ✅ (template `mrgxwb470f`)
+- **Local image status:** ✅ Removed (disk freed, 16GB build cache also pruned)
 - **Build command (RELIABLE — use this):**
   ```bash
   # Step 1: Build with default docker builder (has network access, no DNS issues)
