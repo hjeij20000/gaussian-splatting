@@ -127,10 +127,11 @@ The Telegram bot runs as a Railway **worker** (not a web service — no HTTP por
 
 ## RunPod Setup
 - **API domain:** `https://api.runpod.ai` *(NOT `.io` — that returns 404)*
-- **Template ID:** `mrgxwb470f` (name: `video-to-3dgs`, currently on `:v7`)
+- **Template ID:** `mrgxwb470f` (name: `video-to-3dgs-v11`, currently on `:v11`)
 - **Current Endpoint ID:** `uupefx2whvkg13` (name: `video-to-3dgs`)
 - **GPUs:** ADA_24 + AMPERE_24
-- **Workers:** 1 min / 2 max, FlashBoot OFF, idle timeout 10 min
+- **Workers:** 0 min / 2 max, FlashBoot OFF, idle timeout 10 min
+- **⚠️ CRITICAL:** Always include all 4 AWS env vars when calling `saveTemplate` — passing `"env": []` wipes them and all jobs fail with `'AWS_S3_BUCKET'`
 - **Template env vars set:**
   - `AWS_ACCESS_KEY_ID` = `<YOUR_AWS_ACCESS_KEY_ID>`
   - `AWS_SECRET_ACCESS_KEY` = `<YOUR_AWS_SECRET_ACCESS_KEY>`
@@ -162,15 +163,18 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY='...' \
 
 ## Session Log
 
-### Session 10 (2026-02-27) — SfM stats, splat count, Brush diagnostics 🔄 IN PROGRESS
+### Session 11 (2026-03-01) — Fix v9/v10 regressions → :v11 ✅ COMPLETE
+- **Root cause found:** `RUST_BACKTRACE=1` (added in v9) caused ALL Brush jobs to SIGSEGV consistently. `--seed 42` was a red herring — Brush default is already 42.
+- **Second bug:** Every `saveTemplate` call with `"env": []` wiped AWS credentials → `'AWS_S3_BUCKET'` error on every job. Fixed by always including env vars in template updates.
+- **:v11 deployed:** RUST_BACKTRACE removed, Brush retry logic (3 attempts, sleep on retries only), env vars on template ✅
+
+### Session 10 (2026-02-27) — SfM stats, splat count, Brush diagnostics ✅ COMPLETE
 - **Auto-retry on Brush -11:** bot.py retries job once silently before reporting failure
 - **SfM stats in bot output:** registered/total images + 3D point count (all backends)
 - **Splat count in bot output:** reads PLY header vertex count
-- **RUST_BACKTRACE=1:** added to run_command env — next -11 will give a real stack trace
-- **Brush --seed 42:** explicit seed for reproducibility
-- **:v9 build in progress**
+- **:v9 deployed** (later found to have RUST_BACKTRACE regression — fixed in v11)
 
-### Session 9 (2026-02-27) — Bug hunt + :v8 build 🔄 IN PROGRESS
+### Session 9 (2026-02-27) — Bug hunt + :v8 build ✅ COMPLETE
 - **Workers force-stopped:** set workersMin=0, workersMax=0 via API (stuck worker + CUDA error)
 - **Bug: container start failure** — `cuda>=12.8` requirement not met on some RTX 4090 nodes (driver <570). Fix: downgrade base to `cuda:12.4.1` (requires driver ≥550, much more compatible)
 - **Bug: stderr pipe deadlock** — handler.py used `stderr=PIPE` but never drained it while reading stdout. COLMAP stderr fills 64KB OS buffer → subprocess blocks → handler hangs → worker stuck WORKING. Fix: redirect stderr to file in work_dir.
@@ -354,6 +358,16 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY='...' \
 - **Fix:** Added `torch.manual_seed(42)` + `torch.cuda.manual_seed_all(42)` to hloc_sfm.py and mast3r_sfm.py
 - **Remaining variation:** Cross-GPU hardware float differences (unfixable in software)
 
+### 17. RUST_BACKTRACE=1 causes consistent Brush SIGSEGV ✅ FIXED in :v11
+- **Error:** All Brush jobs fail with -11 regardless of step count
+- **Cause:** `RUST_BACKTRACE=1` env var added in v9 changed Brush's crash-handler behavior, making the intermittent Vulkan race condition consistently reproducible
+- **Fix:** Removed `RUST_BACKTRACE=1` from `run_command()` in video_to_3dgs.py
+
+### 18. saveTemplate wipes AWS env vars ✅ FIXED in :v11
+- **Error:** Jobs fail with `'AWS_S3_BUCKET'` KeyError after any template update
+- **Cause:** Passing `"env": []` in `saveTemplate` GraphQL mutation clears all template env vars
+- **Fix:** Always include all 4 AWS env vars in every `saveTemplate` call
+
 ### 13. Bot tasks silently dropped ✅ FIXED
 - **Error:** Job polling coroutine dropped — bot showed "submitted" but never sent result
 - **Cause:** `asyncio.ensure_future()` doesn't keep tasks alive; they get garbage collected
@@ -434,7 +448,7 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY='...' \
 3. ✅ Telegram bot with 5-step wizard (deployed on Railway)
 4. ✅ Build + push `:v7` with handler.py S3 fix
 5. ✅ Update RunPod template to `:v7`
-6. ⏳ **Redeploy Railway bot** to pick up PLY-as-attachment fix (`f9e71b7`)
-7. ⏳ **End-to-end test** Telegram bot → RunPod → PLY file delivered directly in chat
-8. ⏳ Auto-scale fps/max_resolution in handler based on video length/resolution (fix Bug #5)
-9. ⏳ MILESTONE 1: Local pipeline test (`video_to_3dgs.py` on local RTX 3070)
+6. ✅ PLY-as-attachment fix in bot.py (Railway redeploy needed to activate)
+7. ✅ Brush -11 retry + SfM stats + splat count — deployed in :v11
+8. ⏳ **End-to-end test** :v11 — verify Brush works for both 3000 and 7000 steps
+9. ⏳ Auto-scale fps/max_resolution in handler based on video length/resolution (fix Bug #5)
