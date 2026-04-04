@@ -226,6 +226,7 @@ def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool 
       'fastmap'  – COLMAP SIFT features + FastMap mapper (default)
       'colmap'   – COLMAP SIFT features + COLMAP incremental mapper
       'mast3r'   – MASt3R deep features + pycolmap incremental mapper (best quality)
+      'pycusfm'  – GPU-SIFT features + GPU matching + pycolmap mapper
     """
 
     input_dir = project_dir / "input"
@@ -277,6 +278,23 @@ def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool 
         timings['feature_matching'] = 0
         timings['sfm_reconstruction'] = run_command(cmd, "hloc SfM (SuperPoint + LightGlue + COLMAP)")
         print(f"[INFO] hloc reconstruction saved to {sparse_0}")
+
+    elif sfm_backend == 'pycusfm':
+        # ── PyCuSfM: GPU-accelerated SIFT + sequential matching + pycolmap ──
+        # Faster than CPU COLMAP SIFT on large frame sets; same output format.
+        pycusfm_script = Path(__file__).parent / 'pycusfm_sfm.py'
+        sparse_0 = sparse_dir / '0'
+        sparse_0.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            sys.executable, str(pycusfm_script),
+            '--images', str(input_dir),
+            '--output', str(sparse_0),
+            '--match-overlap', str(match_overlap),
+        ]
+        timings['feature_extraction'] = 0
+        timings['feature_matching'] = 0
+        timings['sfm_reconstruction'] = run_command(cmd, "PyCuSfM (GPU-SIFT + GPU matching + pycolmap)")
+        print(f"[INFO] PyCuSfM reconstruction saved to {sparse_0}")
 
     else:
         # ── COLMAP SIFT feature extraction ──────────────────────────────────
@@ -342,7 +360,7 @@ def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool 
     if not model_path.exists():
         model_path = model_dirs[0]
 
-    # Print standardised SfM result for fastmap/colmap (hloc/mast3r print their own)
+    # Print standardised SfM result for fastmap/colmap (hloc/mast3r/pycusfm print their own)
     if sfm_backend in ('fastmap', 'colmap'):
         try:
             import pycolmap
@@ -489,9 +507,10 @@ Examples:
     parser.add_argument("--use-colmap", action="store_true",
                         help="Use COLMAP mapper instead of FastMap for SfM (ignored if --sfm-backend is set)")
     parser.add_argument("--sfm-backend", type=str, default='fastmap',
-                        choices=['fastmap', 'colmap', 'hloc', 'mast3r'],
+                        choices=['fastmap', 'colmap', 'hloc', 'mast3r', 'pycusfm'],
                         help="SfM backend: fastmap (default, fast/SIFT), colmap (reliable/SIFT), "
-                             "hloc (SuperPoint+LightGlue, good balance), mast3r (best quality, slowest)")
+                             "hloc (SuperPoint+LightGlue, good balance), mast3r (best quality, slowest), "
+                             "pycusfm (GPU-SIFT, fast on large frame sets)")
     parser.add_argument("--max-resolution", type=int, default=1920,
                         help="Max image resolution for Brush training in pixels (default: 1920)")
     parser.add_argument("--oversample", type=int, default=3,

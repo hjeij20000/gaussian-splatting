@@ -14,7 +14,7 @@ Input JSON:
         "video_url":     "https://... or https://drive.google.com/...",  # required
         "fps":            2,         # frames/sec to extract            (default: 2)
         "iterations":     7000,      # Brush training steps             (default: 7000)
-        "sfm_backend":    "mast3r",  # mast3r | fastmap | colmap | hloc (default: mast3r)
+        "sfm_backend":    "mast3r",  # mast3r | fastmap | colmap | hloc | pycusfm (default: mast3r)
 
         # Common optional args (all backends):
         "max_resolution": 1920,      # max image dimension for Brush    (default: 1920)
@@ -73,6 +73,7 @@ _BACKEND_ARGS = {
     "fastmap": {"match_overlap": ("--match-overlap",  5)},
     "colmap":  {"match_overlap": ("--match-overlap",  5)},
     "hloc":    {"match_overlap": ("--match-overlap",  5)},
+    "pycusfm": {"match_overlap": ("--match-overlap",  5)},
 }
 
 VALID_BACKENDS = list(_BACKEND_ARGS)
@@ -89,6 +90,7 @@ _STEP_MAP = [
     ("COLMAP mapper",               "3/6", "SfM reconstruction (COLMAP)"),
     ("MASt3R",                      "3/6", "MASt3R SfM reconstruction"),
     ("hloc",                        "3/6", "HLoc SfM reconstruction"),
+    ("PyCuSfM",                     "3/6", "PyCuSfM reconstruction"),
     ("COLMAP image undistortion",   "4/6", "Undistorting images"),
     ("image undistortion",          "4/6", "Undistorting images"),
     ("Training 3DGS",               "5/6", "Training Gaussians (Brush)"),

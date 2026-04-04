@@ -61,6 +61,7 @@ BACKEND_INFO = {
     "fastmap": {"label": "⚡ fastmap",  "arg_name": "match_overlap", "default_fps": 2},
     "hloc":    {"label": "🔍 hloc",     "arg_name": "match_overlap", "default_fps": 2},
     "mast3r":  {"label": "🎯 mast3r",   "arg_name": "window_size",   "default_fps": 1},
+    "pycusfm": {"label": "🚀 pycusfm",  "arg_name": "match_overlap", "default_fps": 2},
 }
 
 
@@ -152,12 +153,14 @@ async def ask_backend(query_or_msg, user_id: int):
         "🎬 *Step 1 / 5 — Reconstruction method*\n\n"
         "• *fastmap* — Fast SIFT matching. Great all-rounder (~2.5 min)\n"
         "• *hloc* — SuperPoint + LightGlue. Best for shiny/low-texture scenes (~3 min)\n"
-        "• *mast3r* — AI deep matching. Highest quality, slowest (~6.5 min)"
+        "• *mast3r* — AI deep matching. Highest quality, slowest (~6.5 min)\n"
+        "• *pycusfm* — GPU-SIFT matching. Fast on large frame sets (~2 min)"
     )
     markup = kb([
         [("⚡ fastmap", "w:backend:fastmap"),
-         ("🔍 hloc",    "w:backend:hloc"),
-         ("🎯 mast3r",  "w:backend:mast3r")],
+         ("🔍 hloc",    "w:backend:hloc")],
+        [("🎯 mast3r",  "w:backend:mast3r"),
+         ("🚀 pycusfm", "w:backend:pycusfm")],
     ])
     if hasattr(query_or_msg, "edit_message_text"):
         await query_or_msg.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)

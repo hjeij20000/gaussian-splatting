@@ -39,11 +39,21 @@
       "max_resolution": 1920,
       "oversample": 3,
       "match_overlap": 5
+    },
+    {
+      "_description": "pycusfm — GPU-accelerated SIFT features + GPU matching + pycolmap mapper. Fast on large frame sets.",
+      "video_url": "https://example.com/my_video.mp4",
+      "sfm_backend": "pycusfm",
+      "fps": 2,
+      "iterations": 7000,
+      "max_resolution": 1920,
+      "oversample": 3,
+      "match_overlap": 5
     }
   ],
   "argument_reference": {
     "video_url":      "URL to the input video (HTTP/HTTPS or Google Drive share link). Required.",
-    "sfm_backend":    "SfM backend to use: mast3r | fastmap | colmap | hloc. Default: mast3r",
+    "sfm_backend":    "SfM backend to use: mast3r | fastmap | colmap | hloc | pycusfm. Default: mast3r",
     "fps":            "Frames per second to extract from the video. Default: 2",
     "iterations":     "Number of Brush training steps. Default: 7000 (use 30000 for higher quality)",
     "max_resolution": "Max image dimension (pixels) passed to Brush trainer. Default: 1920",

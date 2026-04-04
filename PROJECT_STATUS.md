@@ -410,6 +410,7 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY='...' \
 | `fastmap` | Fast SIFT + FastMap mapper. Good default | `match_overlap` | 2 |
 | `colmap` | SIFT + COLMAP incremental mapper. More reliable on tricky scenes | `match_overlap` | 2 |
 | `hloc` | SuperPoint + LightGlue + COLMAP. Best for low-texture/metallic | `match_overlap` | 2 |
+| `pycusfm` | GPU-SIFT + GPU matching + pycolmap mapper. Fast on large frame sets | `match_overlap` | 2 |
 
 ---
 
