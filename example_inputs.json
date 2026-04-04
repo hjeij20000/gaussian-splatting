@@ -54,6 +54,7 @@
   "argument_reference": {
     "video_url":      "URL to the input video (HTTP/HTTPS or Google Drive share link). Required.",
     "sfm_backend":    "SfM backend to use: mast3r | fastmap | colmap | hloc | pycusfm. Default: mast3r",
+    "trainer":        "Training backend: brush (default) | 3dgut. 3DGUT skips undistortion and handles camera distortion natively via gsplat (requires gsplat >= 1.4.0).",
     "fps":            "Frames per second to extract from the video. Default: 2",
     "iterations":     "Number of Brush training steps. Default: 7000 (use 30000 for higher quality)",
     "max_resolution": "Max image dimension (pixels) passed to Brush trainer. Default: 1920",

@@ -102,6 +102,7 @@ async def runpod_submit(sess: dict) -> str:
         "input": {
             "video_url":      sess["video_url"],
             "sfm_backend":    sess["backend"],
+            "trainer":        sess.get("trainer", "brush"),
             "fps":            sess["fps"],
             "iterations":     sess["iterations"],
             "max_resolution": sess["resolution"],
@@ -135,6 +136,7 @@ def session_summary(sess: dict) -> str:
     arg     = sess.get("arg_name", "").replace("_", " ")   # underscores break Markdown
     val     = sess.get("arg_value", "")
     arg_str = f"  {arg}: {val}\n" if arg else ""
+    trainer = sess.get("trainer", "brush")
     return (
         f"*Settings so far:*\n"
         f"  Backend: {label}\n"
@@ -142,6 +144,7 @@ def session_summary(sess: dict) -> str:
         f"  Resolution: {sess.get('resolution', '?')}px\n"
         f"{arg_str}"
         f"  Iterations: {sess.get('iterations', '?')}\n"
+        f"  Trainer: {trainer}\n"
     )
 
 
@@ -150,7 +153,7 @@ def session_summary(sess: dict) -> str:
 async def ask_backend(query_or_msg, user_id: int):
     sessions[user_id]["step"] = "backend"
     text = (
-        "🎬 *Step 1 / 5 — Reconstruction method*\n\n"
+        "🎬 *Step 1 / 6 — Reconstruction method*\n\n"
         "• *fastmap* — Fast SIFT matching. Great all-rounder (~2.5 min)\n"
         "• *hloc* — SuperPoint + LightGlue. Best for shiny/low-texture scenes (~3 min)\n"
         "• *mast3r* — AI deep matching. Highest quality, slowest (~6.5 min)\n"
@@ -172,7 +175,7 @@ async def ask_fps(query, sess: dict):
     sess["step"] = "fps"
     default = BACKEND_INFO[sess["backend"]]["default_fps"]
     text = (
-        f"📸 *Step 2 / 5 — Frames per second*\n\n"
+        f"📸 *Step 2 / 6 — Frames per second*\n\n"
         f"How many frames to extract per second of video.\n"
         f"More frames = better quality but slower.\n"
         f"_(Recommended: {default} fps for {sess['backend']})_"
@@ -188,7 +191,7 @@ async def ask_fps(query, sess: dict):
 async def ask_resolution(query, sess: dict):
     sess["step"] = "resolution"
     text = (
-        "🖼 *Step 3 / 5 — Max resolution*\n\n"
+        "🖼 *Step 3 / 6 — Max resolution*\n\n"
         "Maximum image size used during reconstruction and training.\n"
         "Higher = more detail but uses more GPU memory.\n\n"
         "• *640px* — Fast, lower detail\n"
@@ -211,7 +214,7 @@ async def ask_backend_arg(query, sess: dict):
 
     if arg_name == "match_overlap":
         text = (
-            "🔗 *Step 4 / 5 — Matching coverage*\n\n"
+            "🔗 *Step 4 / 6 — Matching coverage*\n\n"
             "How many nearby frames each frame is matched against.\n"
             "Higher = more connections between frames, better for complex scenes.\n\n"
             "• *3* — Minimal (fast)\n"
@@ -225,7 +228,7 @@ async def ask_backend_arg(query, sess: dict):
         ]])
     else:  # window_size for mast3r
         text = (
-            "🪟 *Step 4 / 5 — Matching window*\n\n"
+            "🪟 *Step 4 / 6 — Matching window*\n\n"
             "Number of neighboring frames used in MASt3R's deep matching.\n"
             "Larger window = better accuracy on hard scenes.\n\n"
             "• *5* — Fast\n"
@@ -243,7 +246,7 @@ async def ask_backend_arg(query, sess: dict):
 async def ask_iterations(query, sess: dict):
     sess["step"] = "iterations"
     text = (
-        "🔁 *Step 5 / 5 — Training iterations*\n\n"
+        "🔁 *Step 5 / 6 — Training iterations*\n\n"
         "How long to train the 3D Gaussian Splatting model.\n"
         "More iterations = sharper, more detailed result.\n\n"
         "• *3 000* — Quick preview (~20s)\n"
@@ -256,6 +259,21 @@ async def ask_iterations(query, sess: dict):
          ("7 000 — Standard", "w:iterations:7000")],
         [("15 000 — High",    "w:iterations:15000"),
          ("30 000 — Ultra",   "w:iterations:30000")],
+    ])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
+async def ask_trainer(query, sess: dict):
+    sess["step"] = "trainer"
+    text = (
+        "⚙️ *Step 6 / 6 — Training engine*\n\n"
+        "• *Brush* — Fast, lightweight trainer. Works with all backends _(recommended)_\n"
+        "• *3DGUT* — NVIDIA gsplat trainer. Skips undistortion, handles camera distortion "
+        "natively. Slightly slower but higher fidelity on distorted footage."
+    )
+    markup = kb([
+        [("🖌 Brush",  "w:trainer:brush"),
+         ("🚀 3DGUT",  "w:trainer:3dgut")],
     ])
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
 
@@ -355,6 +373,10 @@ async def handle_wizard(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         elif step == "iterations":
             sess["iterations"] = int(value)
+            await ask_trainer(query, sess)
+
+        elif step == "trainer":
+            sess["trainer"] = value
             sessions.pop(user_id, None)
             await query.edit_message_text(
                 f"✅ *All set! Submitting your job…*\n\n{session_summary(sess)}",

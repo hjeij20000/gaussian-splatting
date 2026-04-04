@@ -15,9 +15,10 @@ Input JSON:
         "fps":            2,         # frames/sec to extract            (default: 2)
         "iterations":     7000,      # Brush training steps             (default: 7000)
         "sfm_backend":    "mast3r",  # mast3r | fastmap | colmap | hloc | pycusfm (default: mast3r)
+        "trainer":        "brush",   # brush (default) | 3dgut
 
         # Common optional args (all backends):
-        "max_resolution": 1920,      # max image dimension for Brush    (default: 1920)
+        "max_resolution": 1920,      # max image dimension for Brush    (default: 1920, ignored for 3dgut)
         "oversample":     3,         # oversample factor for blur filter (default: 3)
 
         # Backend-specific args — only used when the matching backend is selected:
@@ -94,6 +95,7 @@ _STEP_MAP = [
     ("COLMAP image undistortion",   "4/6", "Undistorting images"),
     ("image undistortion",          "4/6", "Undistorting images"),
     ("Training 3DGS",               "5/6", "Training Gaussians (Brush)"),
+    ("Training 3DGS with 3DGUT",    "5/6", "Training Gaussians (3DGUT)"),
 ]
 
 
@@ -261,8 +263,12 @@ def handler(job):
     fps            = int(inp.get("fps", 2))
     iterations     = int(inp.get("iterations", 7000))
     sfm_backend    = inp.get("sfm_backend", "mast3r")
+    trainer        = inp.get("trainer", "brush")
     max_resolution = int(inp.get("max_resolution", 1920))
     oversample     = int(inp.get("oversample", 3))
+
+    if trainer not in ("brush", "3dgut"):
+        return {"error": f"Unknown trainer '{trainer}'. Valid choices: brush, 3dgut"}
 
     if not video_url:
         return {"error": "Missing required field: video_url"}
@@ -294,6 +300,7 @@ def handler(job):
             "--video",          video_path,
             "--output",         output_dir,
             "--sfm-backend",    sfm_backend,
+            "--trainer",        trainer,
             "--fps",            str(fps),
             "--iterations",     str(iterations),
             "--max-resolution", str(max_resolution),

@@ -403,6 +403,16 @@ AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY='...' \
 
 ---
 
+## Training Backends
+| Trainer | Description | Undistortion needed | Key flags |
+|---------|-------------|---------------------|-----------|
+| `brush` | Default. Lightweight GPU trainer | ✅ Yes (`colmap image_undistorter`) | `--total-steps`, `--max-resolution` |
+| `3dgut` | gsplat MCMC + Unscented Transform. Handles distortion natively | ❌ No (skipped) | `--with_ut --with_eval3d` |
+
+**3DGUT requirements:** gsplat >= 1.4.0 (local repo at `Luminance-GS/gsplat` must be on `main` branch, not v1.0.0 tag). Upgrade: `pip install gsplat==1.5.3` or `git checkout main && pip install -e .` in the gsplat repo.
+
+---
+
 ## SfM Backends
 | Backend | Description | Unique arg | Default FPS |
 |---------|-------------|------------|-------------|

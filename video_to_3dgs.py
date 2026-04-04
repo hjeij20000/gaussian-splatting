@@ -202,6 +202,8 @@ def extract_frames(video_path: Path, output_dir: Path, fps: int = 2,
 
 FASTMAP_DIR = Path("/home/ibrahim/fastmap")
 HLOC_DIR = Path("/home/ibrahim/hloc")
+GSPLAT_DIR = Path("/home/ibrahim/Luminance-GS/gsplat")
+GSPLAT_TRAINER = GSPLAT_DIR / "examples" / "simple_trainer.py"
 
 
 def _needs_xvfb():
@@ -471,6 +473,67 @@ def train_gaussian_splatting(project_dir: Path, output_dir: Path, iterations: in
         sys.exit(1)
 
 
+def prepare_3dgut_data(work_dir: Path) -> Path:
+    """Create the data directory layout expected by gsplat's COLMAP parser.
+
+    gsplat expects:
+      {data_dir}/sparse/0/   ← COLMAP binary model from SfM
+      {data_dir}/images/     ← original (distorted) frames
+
+    We symlink both from the existing workspace so no copies are made.
+    """
+    data_dir = work_dir / "3dgut_data"
+    data_dir.mkdir(exist_ok=True)
+
+    sparse_link = data_dir / "sparse"
+    if not sparse_link.exists():
+        sparse_link.symlink_to((work_dir / "distorted" / "sparse").resolve())
+
+    images_link = data_dir / "images"
+    if not images_link.exists():
+        images_link.symlink_to((work_dir / "input").resolve())
+
+    return data_dir
+
+
+def train_3dgut(work_dir: Path, output_dir: Path, iterations: int = 7000):
+    """Train using gsplat 3DGUT (skips undistortion — handles camera distortion natively).
+
+    Requires gsplat >= 1.4.0 with 3DGUT support (--with_ut --with_eval3d).
+    The local repo at GSPLAT_DIR must be on main branch (not v1.0.0 tag).
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    data_dir = prepare_3dgut_data(work_dir)
+    result_dir = output_dir / "3dgut_result"
+
+    cmd = [
+        sys.executable, str(GSPLAT_TRAINER), "mcmc",
+        "--data_dir",    str(data_dir),
+        "--result_dir",  str(result_dir),
+        "--max_steps",   str(iterations),
+        "--data_factor", "1",
+        "--save_ply",
+        "--ply_steps",   str(iterations),
+        "--with_ut",
+        "--with_eval3d",
+    ]
+
+    elapsed = run_command(cmd, f"Training 3DGS with 3DGUT/gsplat ({iterations} steps)")
+
+    # gsplat saves PLY at step (iterations - 1)
+    ply_src = result_dir / "ply" / f"point_cloud_{iterations - 1}.ply"
+    ply_dst = output_dir / f"export_{iterations}.ply"
+    if ply_src.exists():
+        shutil.copy(str(ply_src), str(ply_dst))
+        print(f"[INFO] 3DGUT PLY copied to {ply_dst}")
+    else:
+        print(f"[ERROR] Expected PLY not found at {ply_src}")
+        sys.exit(1)
+
+    return elapsed
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Convert video to 3D Gaussian Splatting model",
@@ -519,6 +582,9 @@ Examples:
                         help="COLMAP sequential matching overlap (default: 5, lower=faster)")
     parser.add_argument("--window-size", type=int, default=10,
                         help="MASt3R sliding window size for pair creation (default: 10)")
+    parser.add_argument("--trainer", type=str, default='brush',
+                        choices=['brush', '3dgut'],
+                        help="Training backend: brush (default) or 3dgut (gsplat, skips undistortion)")
 
     args = parser.parse_args()
 
@@ -598,8 +664,12 @@ SfM backend:{sfm_backend}
                                        match_overlap=args.match_overlap,
                                        sfm_backend=sfm_backend,
                                        window_size=args.window_size)
-        timings['undistortion'] = undistort_images(work_dir)
         timings.update(colmap_timings)
+        if args.trainer == '3dgut':
+            print("[INFO] 3DGUT trainer — skipping undistortion (distortion handled natively)")
+            timings['undistortion'] = 0
+        else:
+            timings['undistortion'] = undistort_images(work_dir)
     else:
         print("[SKIP] COLMAP (using existing camera poses)")
         timings['feature_extraction'] = 0
@@ -608,8 +678,11 @@ SfM backend:{sfm_backend}
         timings['undistortion'] = 0
 
     # Step 3: Train 3DGS
-    timings['training'] = train_gaussian_splatting(work_dir, model_dir, args.iterations,
-                                                   max_resolution=args.max_resolution)
+    if args.trainer == '3dgut':
+        timings['training'] = train_3dgut(work_dir, model_dir, args.iterations)
+    else:
+        timings['training'] = train_gaussian_splatting(work_dir, model_dir, args.iterations,
+                                                       max_resolution=args.max_resolution)
 
     total_time = time.time() - pipeline_start
 
