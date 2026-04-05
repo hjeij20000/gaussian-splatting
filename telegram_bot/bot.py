@@ -59,6 +59,7 @@ sessions: dict[int, dict] = {}
 
 BACKEND_INFO = {
     "fastmap": {"label": "⚡ fastmap",  "arg_name": "match_overlap", "default_fps": 2},
+    "colmap":  {"label": "🗺️ colmap",   "arg_name": "match_overlap", "default_fps": 2},
     "hloc":    {"label": "🔍 hloc",     "arg_name": "match_overlap", "default_fps": 2},
     "mast3r":  {"label": "🎯 mast3r",   "arg_name": "window_size",   "default_fps": 1},
 }
@@ -154,13 +155,15 @@ async def ask_backend(query_or_msg, user_id: int):
     text = (
         "🎬 *Step 1 / 6 — Reconstruction method*\n\n"
         "• *fastmap* — Fast SIFT matching. Great all-rounder (~2.5 min)\n"
+        "• *colmap* — SIFT + COLMAP mapper. More reliable on tricky scenes (~3.5 min)\n"
         "• *hloc* — SuperPoint + LightGlue. Best for shiny/low-texture scenes (~3 min)\n"
         "• *mast3r* — AI deep matching. Highest quality, slowest (~6.5 min)"
     )
     markup = kb([
         [("⚡ fastmap", "w:backend:fastmap"),
-         ("🔍 hloc",    "w:backend:hloc")],
-        [("🎯 mast3r",  "w:backend:mast3r")],
+         ("🗺️ colmap",  "w:backend:colmap")],
+        [("🔍 hloc",    "w:backend:hloc"),
+         ("🎯 mast3r",  "w:backend:mast3r")],
     ])
     if hasattr(query_or_msg, "edit_message_text"):
         await query_or_msg.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)

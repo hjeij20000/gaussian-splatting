@@ -30,26 +30,30 @@ Full pipeline: download video → extract frames → SfM reconstruction → [und
 
 ## Docker Image (RunPod serverless)
 - **Docker Hub:** `hjeij2000/video-to-3dgs:serverless`
-- **Latest deployed tag:** `:v12` ✅ (2026-04-05)
-- **Image size:** 8.34 GB
+- **Latest deployed tag:** `:v13` ✅ (2026-04-06)
+- **Image size:** ~8.5 GB (estimated)
 
 ### Build command (RELIABLE — use this from /home/ibrahim):
 ```bash
-docker build -f gaussian-splatting/Dockerfile -t hjeij2000/video-to-3dgs:v12 .
-docker tag hjeij2000/video-to-3dgs:v12 hjeij2000/video-to-3dgs:serverless
-docker push hjeij2000/video-to-3dgs:v12
+docker build -f gaussian-splatting/Dockerfile -t hjeij2000/video-to-3dgs:v13 .
+docker tag hjeij2000/video-to-3dgs:v13 hjeij2000/video-to-3dgs:serverless
+docker push hjeij2000/video-to-3dgs:v13
 docker push hjeij2000/video-to-3dgs:serverless
 ```
 **NOTE:** `docker buildx build --push` fails intermittently (DNS inside buildx container). Use plain `docker build` + `docker push`.
 
+### :v13 ✅ (2026-04-06)
+- All :v12 changes included
+- 3DGUT trainer fixes: `--disable-viewer`, `--disable_video`, `--eval-steps 999999`
+- Symlink fix in `prepare_3dgut_data()` (`is_symlink()` instead of `exists()`)
+- MASt3R mapper switched from `glomap` → `pycolmap` locally (GLOMAP binary crashes locally; Docker uses GLOMAP which still works on RunPod)
+- Telegram bot: colmap added as 4th SfM backend option in UI (2×2 button grid)
+
 ### :v12 ✅ (2026-04-05)
 - 3DGUT training backend (gsplat MCMC + `--with_ut --with_eval3d`)
-- gsplat v1.5.3 built in builder stage (`TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0+PTX"` — Pascal sm_61 excluded because `cooperative_groups::labeled_partition` requires sm_70+)
-- fused-ssim (rahul-goel fork) + fused-bilagrid compiled in builder stage (need nvcc)
+- gsplat v1.5.3 built in builder stage (`TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0+PTX"`)
+- fused-ssim (rahul-goel fork) + fused-bilagrid compiled in builder stage
 - nerfview installed in runtime stage (pure Python)
-- New deps: imageio[ffmpeg], viser, tyro, scikit-learn, torchmetrics[image], tensorboard, tensorly, splines
-- pycusfm_sfm.py added (placeholder)
-- `trainer` input field in handler.py (`brush` default | `3dgut`)
 - boto3 S3 client timeout fix: `connect_timeout=30, read_timeout=300, retries={"max_attempts": 3}`
 - Telegram bot: 6-step wizard (trainer selection as Step 6), pycusfm removed from UI
 
@@ -58,8 +62,8 @@ docker push hjeij2000/video-to-3dgs:serverless
 - Brush retry: up to 3 attempts on -11
 - Always include AWS env vars in saveTemplate calls
 
-### :v10 ⚠️ (2026-02-28) — broken (RUST_BACKTRACE=1 present)
-### :v9 ⚠️ (2026-02-28) — regressed (RUST_BACKTRACE=1 + template env vars wiped)
+### :v10 ⚠️ (2026-02-28) — broken
+### :v9 ⚠️ (2026-02-28) — regressed
 ### :v8 ✅ (2026-02-27)
 - CUDA 12.4.1 base; torch 2.6.0+cu124; stderr deadlock fix; torch seeds
 
@@ -69,7 +73,7 @@ docker push hjeij2000/video-to-3dgs:serverless
 | Trainer | Description | Undistortion | Key flags |
 |---------|-------------|--------------|-----------|
 | `brush` | Default. Lightweight Vulkan/wgpu trainer | ✅ Required | `--total-steps`, `--max-resolution` |
-| `3dgut` | gsplat MCMC + Unscented Transform. Handles camera distortion natively | ❌ Skipped | `--with_ut`, `--with_eval3d` |
+| `3dgut` | gsplat MCMC + Unscented Transform. Handles camera distortion natively | ❌ Skipped | `--with_ut`, `--with_eval3d`, `--disable-viewer`, `--disable_video`, `--eval-steps 999999` |
 
 ### 3DGUT details
 - Trainer script: `Luminance-GS/gsplat/examples/simple_trainer.py mcmc`
@@ -77,20 +81,24 @@ docker push hjeij2000/video-to-3dgs:serverless
 - Data layout: `{data_dir}/sparse/0/` + `{data_dir}/images/`
 - `prepare_3dgut_data()` symlinks `distorted/sparse` → `sparse` and `input/` → `images` inside `3dgut_data/`
 - gsplat local status: v1.5.3 ✅, `datasets/colmap.py` patched for pycolmap 3.13+ ✅
-- **⚠️ Not yet tested end-to-end on RunPod** — v12 image deployed but S3 upload hang occurred during first test; fix pushed in updated :v12/:serverless
+- **⚠️ `--disable-viewer` is critical** — without it, trainer sleeps for 11 days after training (`time.sleep(1000000)` in simple_trainer.py:1189)
+- **⚠️ `--eval-steps 999999` is critical** — default eval_steps=[7000,30000] triggers trajectory rendering + DataLoader that hangs
+- **⚠️ RunPod end-to-end test still pending** — needs :v13 cold start
 
 ---
 
 ## SfM Backends
 | Backend | Description | Unique arg | Default FPS |
 |---------|-------------|------------|-------------|
-| `mast3r` | Best quality, slowest. Deep feature matching + GLOMAP | `window_size` | 1 |
 | `fastmap` | Fast SIFT + FastMap mapper. Good default | `match_overlap` | 2 |
 | `colmap` | SIFT + COLMAP incremental mapper. More reliable on tricky scenes | `match_overlap` | 2 |
 | `hloc` | SuperPoint + LightGlue + COLMAP. Best for low-texture/metallic | `match_overlap` | 2 |
+| `mast3r` | Best quality, slowest. Deep feature matching + pycolmap (local) / GLOMAP (RunPod) | `window_size` | 1 |
 | `pycusfm` | GPU-SIFT + GPU matching + pycolmap mapper (**placeholder**) | `match_overlap` | 2 |
 
 **pycusfm note:** NVIDIA pyCuSFM requires initial camera poses — not suitable for unposed monocular video yet. `pycusfm_sfm.py` is in place for when NVIDIA adds that support. **Removed from bot UI** (still in handler.py as a valid backend if called via API).
+
+**mast3r local note:** GLOMAP binary crashes locally (`colmap::Database::Open` SIGABRT — version mismatch with kapture-generated db). Switched to `--mapper pycolmap` in `video_to_3dgs.py` for local runs. Docker image still uses GLOMAP which works fine on RunPod.
 
 ---
 
@@ -104,8 +112,8 @@ A 6-step wizard that lets non-technical users submit jobs and receive results.
 4. Submits job to RunPod, polls every 20s, edits status message live
 5. On completion: sends timings summary, then delivers `.ply` as Telegram file (≤45 MB); falls back to presigned S3 link for larger files
 
-### Bot backends shown (3 options — pycusfm removed)
-- ⚡ fastmap, 🔍 hloc, 🎯 mast3r
+### Bot backends shown (4 options — 2×2 grid)
+- ⚡ fastmap, 🗺️ colmap, 🔍 hloc, 🎯 mast3r
 
 ### Files
 - **`telegram_bot/bot.py`** — full bot code (single file)
@@ -133,7 +141,7 @@ AWS_S3_REGION=me-south-1
 ## RunPod Setup
 - **API domain:** `https://api.runpod.ai` *(NOT `.io` — returns 404)*
 - **Endpoint ID:** `uupefx2whvkg13` (name: `video-to-3dgs`)
-- **Template ID:** `mrgxwb470f` (now on `:v12` via `:serverless` tag)
+- **Template ID:** `mrgxwb470f` (needs update to `:v13` via `:serverless` tag)
 - **GPUs:** ADA_24 + AMPERE_24
 - **Workers:** 0 min / 2 max, FlashBoot OFF, idle timeout 10 min
 - **⚠️ CRITICAL:** Always include all 4 AWS env vars when calling `saveTemplate` — `"env": []` wipes them
@@ -150,7 +158,7 @@ curl -X POST "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/run" \
   -H "Content-Type: application/json" \
   -d '{"input": {"video_url": "...", "sfm_backend": "hloc", "trainer": "brush", "fps": 2, "iterations": 7000}}'
 
-# Submit job (3DGUT — requires :v12)
+# Submit job (3DGUT — requires :v13)
 curl -X POST "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/run" \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
@@ -176,51 +184,34 @@ curl "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/status/{JOB_ID}" \
 
 ## Session Log
 
-### Session 13 (2026-04-05) — :v12 build, deploy, first RunPod test ⏳ IN PROGRESS
-- **Fixed .dockerignore** — was missing `!Luminance-GS/`; added it + exclusions for `.git/` subdirs
-- **Built Docker :v12** — 4 attempts due to new errors:
-  - Bug #20: gsplat `pip install -e .` failed with `No module named 'torch'` → fixed with `--no-build-isolation`
-  - Bug #21: `cooperative_groups::labeled_partition` unavailable on sm_61 (Pascal) → fixed by setting `TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0+PTX"` for the gsplat build step only
-  - Bug #22: fused-ssim + fused-bilagrid are CUDA extensions — failed in runtime stage (no nvcc) → moved to builder stage
-  - Final build succeeded: 8.34 GB image ✅
-- **Pushed** `:v12` and `:serverless` to Docker Hub ✅
-- **Pushed 48 commits to GitHub** (`myfork` remote) — Railway redeployed bot ✅
-- **Bot updated:** 3DGUT trainer option visible in Step 6, pycusfm removed from UI
-- **First RunPod test:** Job ran (pipeline completed in ~3.5 min on RTX 4090), then **hung at S3 upload** — boto3 had no timeout, connection stalled indefinitely
-- **Bug #23 fixed:** Added `connect_timeout=30, read_timeout=300, retries=3` to boto3 client in handler.py
-- **Rebuilt + re-pushed** `:v12` and `:serverless` with boto3 fix ✅
-- **Second test attempt:** Warm worker still running old image without fix → job stuck again
-- **Resolution:** User must force cold start (set RunPod workers to 0 → save → restore)
-- **3DGUT end-to-end test:** Still pending (needs cold start + retry)
-- **Local GPU:** RTX 3070 Mobile still in power-error state — all tests must be on RunPod
+### Session 14 (2026-04-05/06) — Local full test + 3DGUT fixes + :v13
+- **Local benchmark** — all 4 Brush SfM backends tested end-to-end on IMG_2188(1).MOV:
+  - RTX 3070 Mobile back online (was in power-error state)
+  - Fixed 12 missing Python packages in `gs` conda env
+  - Fixed `np.fromstring` → `np.frombuffer` in fastmap (numpy 2.x breaking change)
+  - Fixed GLOMAP → pycolmap mapper for mast3r locally (GLOMAP binary incompatible with kapture db)
+- **3DGUT local test** — discovered and fixed 3 hangs:
+  - Bug #24: `--with_eval3d` triggers trajectory rendering → `writer.close()` hangs (imageio ffmpeg) → fixed with `--disable_video`
+  - Bug #25: `--eval-steps` defaults to [7000, 30000] → triggers eval DataLoader hang → fixed with `--eval-steps 999999`
+  - Bug #26: After training, viser viewer `time.sleep(1000000)` keeps process alive 11 days → fixed with `--disable-viewer`
+  - Bug #27: Symlink in `prepare_3dgut_data()` uses `exists()` (follows symlinks, returns False for broken links) → fixed with `is_symlink()`
+- **Telegram bot** — colmap added as 4th SfM backend (2×2 grid)
+- **Laptop** — screen lock/sleep disabled while on charger
+- **:v13 build + push** — in progress
+
+### Session 13 (2026-04-05) — :v12 build, deploy, first RunPod test
+- Fixed .dockerignore, built :v12, fixed boto3 S3 timeout (Bug #23)
+- First RunPod test hung at S3 upload → fixed → second test hit warm worker
+- 3DGUT end-to-end on RunPod still pending (needs :v13 cold start)
 
 ### Session 12 (2026-04-05) — 3DGUT + pycusfm + v12 prep
-- Added pycusfm SfM backend (placeholder — NVIDIA pyCuSFM doesn't support unposed video yet)
-- Added 3DGUT training backend: `train_3dgut()` + `prepare_3dgut_data()` in `video_to_3dgs.py`
-- Upgraded gsplat from v1.0.0 → main branch (v1.5.3) in `Luminance-GS/gsplat`
-- Patched `datasets/colmap.py` for modern pycolmap 3.13+ API (`pycolmap.Reconstruction`)
-- Telegram bot upgraded to 6-step wizard (trainer selection added)
-- Dockerfile updated for v12 (gsplat builder stage, 3DGUT deps)
-- Blocker: local GPU in power-error state
+- Added 3DGUT trainer, pycusfm placeholder, upgraded gsplat v1.0→v1.5.3
 
 ### Session 11 (2026-03-01) — Fix v9/v10 regressions → :v11 ✅
-- Root cause: `RUST_BACKTRACE=1` caused ALL Brush jobs to SIGSEGV
-- `saveTemplate` with `"env": []` wiped AWS credentials — fixed
-- :v11 deployed ✅
-
 ### Session 10 (2026-02-27) — SfM stats, splat count, Brush diagnostics ✅
-- Auto-retry on Brush -11 in bot.py; SfM stats + splat count in bot output
-
 ### Session 9 (2026-02-27) — Bug hunt + :v8 ✅
-- CUDA 12.4.1 base; stderr deadlock fix; torch seeds; :v8 deployed ✅
-
 ### Session 8 (2026-02-27) — PLY delivery fix ✅
-- PLY sent as Telegram file attachment
-
 ### Session 7 (2026-02-27) — Local hloc test ✅
-- Video: Drive `1OvptV4p43OGIpKTpT8dQFdopDF6-7ejO` (172MB, 58s)
-- hloc, fps=2, 960px, match_overlap=10, 3000 iters → 20MB PLY, 86,214 points, 162.5s
-
 ### Session 6 (2026-02-27) — :v7 build + deploy ✅
 ### Session 5 (2026-02-26/27) — Telegram Bot ✅
 ### Session 4 (2026-02-26) — LocalVSServerless benchmark ✅
@@ -254,30 +245,46 @@ curl "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/status/{JOB_ID}" \
 | 18 | saveTemplate wipes AWS env vars | ✅ | :v11 |
 | 19 | gsplat COLMAP parser incompatible with pycolmap 3.x | ✅ | Session 12 |
 | 20 | gsplat pip install fails — `No module named 'torch'` | ✅ | :v12 (`--no-build-isolation`) |
-| 21 | gsplat CUDA build fails for sm_61 (`labeled_partition` requires sm_70+) | ✅ | :v12 (override `TORCH_CUDA_ARCH_LIST` for gsplat step) |
+| 21 | gsplat CUDA build fails for sm_61 | ✅ | :v12 (override `TORCH_CUDA_ARCH_LIST`) |
 | 22 | fused-ssim/bilagrid fail in runtime stage (no nvcc) | ✅ | :v12 (moved to builder stage) |
-| 23 | S3 upload hangs indefinitely (no boto3 timeout) | ✅ | :v12 patch (`connect_timeout=30, read_timeout=300`) |
+| 23 | S3 upload hangs indefinitely (no boto3 timeout) | ✅ | :v12 patch |
+| 24 | 3DGUT trajectory rendering hangs (`writer.close()` ffmpeg) | ✅ | :v13 (`--disable_video`) |
+| 25 | 3DGUT eval DataLoader hangs at step 6999 | ✅ | :v13 (`--eval-steps 999999`) |
+| 26 | 3DGUT viser viewer sleeps 11 days after training | ✅ | :v13 (`--disable-viewer`) |
+| 27 | 3DGUT symlink fails on retry (`exists()` vs `is_symlink()`) | ✅ | :v13 |
 
 ---
 
 ## Next Steps (priority order)
 
-1. **Force cold start on RunPod** — Set Max Workers → 0 → Save → restore → Submit test job
-2. **Test Brush regression** — `{"sfm_backend": "hloc", "trainer": "brush", "fps": 2, "iterations": 7000}`
-3. **Test 3DGUT** — `{"sfm_backend": "hloc", "trainer": "3dgut", "fps": 2, "iterations": 7000}`
-4. **If 3DGUT fails** — check RunPod logs for the actual error; share logs.txt
-5. **Add 3DGUT benchmark row** to Benchmark Results table once tested
-6. **Fix local GPU** — RTX 3070 Mobile in power-error state; needs hard power cycle
+1. **Push :v13 to Docker Hub** — build + push in progress
+2. **Force cold start on RunPod** — Set Max Workers → 0 → Save → restore
+3. **Test Brush regression on RunPod** — `{"sfm_backend": "hloc", "trainer": "brush", "fps": 2, "iterations": 7000}`
+4. **Test 3DGUT on RunPod** — `{"sfm_backend": "hloc", "trainer": "3dgut", "fps": 2, "iterations": 7000}`
+5. **Add 3DGUT benchmark row** to Benchmark Results once RunPod test passes
 
 ---
 
-## Benchmark Results (IMG_2188.MOV, RTX 4090, RunPod)
+## Benchmark Results (IMG_2188.MOV / IMG_2188(1).MOV)
+
+### RTX 4090 (RunPod)
 | Backend | Trainer | PLY Size | Total Time | SfM Time | Notes |
 |---------|---------|----------|------------|----------|-------|
 | fastmap | brush | 121.3 MB | 160.64s | ~60s | fps=1, 960px |
 | hloc | brush | 80.0 MB | 100.48s | ~40s | fps=2, 960px |
 | mast3r | brush | 130.0 MB | 387.34s | 308s | fps=1, 960px |
-| hloc | 3dgut | — | — | — | ⏳ pending cold-start test |
+| hloc | 3dgut | — | — | — | ⏳ pending :v13 cold-start test |
+
+### RTX 3070 Mobile (local, fps=2, 960px, 7000 iters)
+| Backend | Trainer | PLY Size | Total Time | SfM Time | Train Time |
+|---------|---------|----------|------------|----------|------------|
+| colmap | brush | 112 MB | 3:74m | 68.6s | 101.8s |
+| fastmap | brush | 161 MB | 3:75m | 72.7s | 114.6s |
+| hloc | brush | 80 MB | 3:09m | 60.6s | 89.8s |
+| mast3r | brush | 250 MB | 2:89m* | —* | 144.0s |
+| colmap | 3dgut | 185 MB | 13:06m | 70.1s | 664s |
+
+*mast3r SfM ran separately (pycolmap mapper); timing excludes SfM
 
 ---
 
@@ -290,8 +297,8 @@ curl "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/status/{JOB_ID}" \
 ---
 
 ## Storage Management
-- Disk: 192G total, ~23G free (as of 2026-04-05 post build-cache prune)
+- Disk: 192G total, ~25G free (as of 2026-04-06 pre :v13 build)
 - **Post-build cleanup:**
-  1. `docker builder prune -f` — clear build cache (~34GB freed)
-  2. `docker image rm hjeij2000/video-to-3dgs:v12 hjeij2000/video-to-3dgs:serverless` — remove local images
+  1. `docker builder prune -f` — clear build cache
+  2. `docker image rm hjeij2000/video-to-3dgs:v13 hjeij2000/video-to-3dgs:serverless` — remove local images
 - `docker system prune -a -f` — nuclear option if disk critically low

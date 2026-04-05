@@ -255,8 +255,7 @@ def run_colmap(project_dir: Path, use_gpu: bool = True, use_colmap_mapper: bool 
             '--images', str(input_dir),
             '--output', str(sparse_0),
             '--cache-dir', str(cache_dir),
-            '--mapper', 'glomap',
-            '--glomap-bin', '/home/ibrahim/local/bin/glomap',
+            '--mapper', 'pycolmap',
             '--window-size', str(window_size),
         ]
         timings['feature_extraction'] = 0
@@ -486,12 +485,14 @@ def prepare_3dgut_data(work_dir: Path) -> Path:
     data_dir.mkdir(exist_ok=True)
 
     sparse_link = data_dir / "sparse"
-    if not sparse_link.exists():
-        sparse_link.symlink_to((work_dir / "distorted" / "sparse").resolve())
+    if sparse_link.is_symlink():
+        sparse_link.unlink()
+    sparse_link.symlink_to((work_dir / "distorted" / "sparse").resolve())
 
     images_link = data_dir / "images"
-    if not images_link.exists():
-        images_link.symlink_to((work_dir / "input").resolve())
+    if images_link.is_symlink():
+        images_link.unlink()
+    images_link.symlink_to((work_dir / "input").resolve())
 
     return data_dir
 
@@ -517,6 +518,9 @@ def train_3dgut(work_dir: Path, output_dir: Path, iterations: int = 7000):
         "--ply_steps",   str(iterations),
         "--with_ut",
         "--with_eval3d",
+        "--disable_video",
+        "--disable-viewer",
+        "--eval-steps", "999999",
     ]
 
     elapsed = run_command(cmd, f"Training 3DGS with 3DGUT/gsplat ({iterations} steps)")
