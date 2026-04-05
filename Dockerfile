@@ -55,6 +55,14 @@ RUN pip3 install --no-cache-dir --no-build-isolation \
 COPY fastmap /app/fastmap
 RUN cd /app/fastmap && pip3 install --no-cache-dir --no-build-isolation .
 
+# ── gsplat (3DGUT CUDA extension) ─────────────────────────────────────────
+# Copy only the package source + examples (skip .git, docs, assets)
+COPY Luminance-GS/gsplat/gsplat      /app/gsplat/gsplat
+COPY Luminance-GS/gsplat/examples    /app/gsplat/examples
+COPY Luminance-GS/gsplat/setup.py    /app/gsplat/setup.py
+COPY Luminance-GS/gsplat/README.md   /app/gsplat/README.md
+RUN cd /app/gsplat && pip3 install --no-cache-dir -e .
+
 
 # =============================================================================
 # Stage 2 — runtime: lean image with everything needed to run
@@ -126,7 +134,24 @@ RUN pip3 install --no-cache-dir \
         # Serverless handler deps
         runpod \
         gdown \
-        boto3
+        boto3 \
+        # 3DGUT / gsplat trainer deps
+        "imageio[ffmpeg]" \
+        viser \
+        "tyro>=0.8.8" \
+        scikit-learn \
+        "torchmetrics[image]" \
+        tensorboard \
+        tensorly \
+        splines
+
+RUN pip3 install --no-cache-dir \
+        "git+https://github.com/nerfstudio-project/nerfview@4538024fe0d15fd1a0e4d760f3695fc44ca72787" \
+        "git+https://github.com/rahul-goel/fused-ssim@328dc9836f513d00c4b5bc38fe30478b4435cbb5" \
+        "git+https://github.com/harry7557558/fused-bilagrid@90f9788e57d3545e3a033c1038bb9986549632fe"
+
+# ── Copy compiled gsplat package from builder ──────────────────────────────
+COPY --from=builder /app/gsplat /app/gsplat
 
 # ── Brush 0.3.0 binary (Vulkan/wgpu — GPU-vendor agnostic) ─────────────────
 COPY brush-app-x86_64-unknown-linux-gnu/brush_app /usr/local/bin/brush
@@ -159,6 +184,7 @@ COPY gaussian-splatting/train.py \
      gaussian-splatting/video_to_3dgs.py \
      gaussian-splatting/mast3r_sfm.py \
      gaussian-splatting/hloc_sfm.py \
+     gaussian-splatting/pycusfm_sfm.py \
      gaussian-splatting/handler.py \
      gaussian-splatting/run_pipeline.sh \
      gaussian-splatting/start.sh \
@@ -195,6 +221,10 @@ RUN sed -i \
 RUN sed -i \
     "s|HLOC_DIR = Path(\"/home/ibrahim/hloc\")|HLOC_DIR = Path(\"/app/hloc\")|" \
     /app/gaussian-splatting/hloc_sfm.py
+
+RUN sed -i \
+    's|GSPLAT_DIR = Path("/home/ibrahim/Luminance-GS/gsplat")|GSPLAT_DIR = Path("/app/gsplat")|' \
+    /app/gaussian-splatting/video_to_3dgs.py
 
 # ── Pre-download MASt3R weights (baked into image to avoid cold-start delay) ─
 RUN PYTHONPATH=/app/mast3r:/app/mast3r/dust3r:/app/mast3r/dust3r/dust3r_visloc \
