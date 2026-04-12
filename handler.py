@@ -119,7 +119,7 @@ def get_gpu_info() -> str:
 def download_video(url: str, dest: str):
     """Download video from a regular URL or a Google Drive share link."""
     if "drive.google.com" in url:
-        gdown.download(url, dest, fuzzy=True, quiet=False)
+        gdown.download(url, dest, quiet=False)
     else:
         r = requests.get(url, stream=True, timeout=120)
         r.raise_for_status()
