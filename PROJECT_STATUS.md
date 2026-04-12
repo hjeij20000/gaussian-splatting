@@ -135,8 +135,8 @@ RUNPOD_API_KEY=...
 RUNPOD_ENDPOINT_ID=uupefx2whvkg13
 AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
-AWS_S3_BUCKET=splats-bucket
-AWS_S3_REGION=me-south-1
+AWS_S3_BUCKET=frankfurt-splats-bucket
+AWS_S3_REGION=eu-central-1
 ```
 
 ### GitHub repo (Railway source)
@@ -156,7 +156,7 @@ AWS_S3_REGION=me-south-1
 - **⚠️ To force cold start (pick up new image):** Set Max Workers to 0 → Save → wait 10s → set back → Save
 
 ### Template env vars
-- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET=splats-bucket`, `AWS_S3_REGION=me-south-1`
+- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET=frankfurt-splats-bucket`, `AWS_S3_REGION=eu-central-1`
 
 ### Useful API calls
 ```bash
@@ -270,11 +270,7 @@ curl "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/status/{JOB_ID}" \
 2. **Test Brush regression on RunPod** — `{"sfm_backend": "hloc", "trainer": "brush", "fps": 2, "iterations": 7000}`
 3. **Test 3DGUT on RunPod** — `{"sfm_backend": "hloc", "trainer": "3dgut", "fps": 2, "iterations": 7000}`
 4. **Add 3DGUT benchmark row** to Benchmark Results once RunPod test passes
-5. **Update S3 bucket name** — new bucket name TBD. Once known, update in:
-   - RunPod template env var `AWS_S3_BUCKET` (via dashboard)
-   - Railway dashboard env var `AWS_S3_BUCKET`
-   - Local `gaussian-splatting/.env`
-   - `telegram_bot/.env.example`
+5. ~~**Update S3 bucket name**~~ ✅ — `frankfurt-splats-bucket` / `eu-central-1` updated in RunPod template, Railway, and local `.env`
 
 ---
 
