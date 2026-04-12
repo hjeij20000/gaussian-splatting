@@ -15,7 +15,7 @@ Input JSON:
         "fps":            2,         # frames/sec to extract            (default: 2)
         "iterations":     7000,      # Brush training steps             (default: 7000)
         "sfm_backend":    "mast3r",  # mast3r | fastmap | colmap | hloc | pycusfm (default: mast3r)
-        "trainer":        "brush",   # brush (default) | 3dgut
+        "trainer":        "brush",   # brush (default) | 3dgut | 2dgs
 
         # Common optional args (all backends):
         "max_resolution": 1920,      # max image dimension for Brush    (default: 1920, ignored for 3dgut)
@@ -96,6 +96,7 @@ _STEP_MAP = [
     ("image undistortion",          "4/6", "Undistorting images"),
     ("Training 3DGS",               "5/6", "Training Gaussians (Brush)"),
     ("Training 3DGS with 3DGUT",    "5/6", "Training Gaussians (3DGUT)"),
+    ("Training 2DGS",               "5/6", "Training Gaussians (2DGS)"),
 ]
 
 
@@ -136,7 +137,11 @@ def upload_to_s3(local_path: str, s3_key: str) -> str:
     region = os.environ.get("AWS_S3_REGION", "us-east-1")
     endpoint_url = f"https://s3.{region}.amazonaws.com"
     s3 = boto3.client("s3", region_name=region, endpoint_url=endpoint_url,
-                      config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}))
+                      config=Config(signature_version="s3v4",
+                                    s3={"addressing_style": "virtual"},
+                                    connect_timeout=30,
+                                    read_timeout=300,
+                                    retries={"max_attempts": 3}))
     s3.upload_file(local_path, bucket, s3_key)
     url = s3.generate_presigned_url(
         "get_object",
@@ -267,8 +272,8 @@ def handler(job):
     max_resolution = int(inp.get("max_resolution", 1920))
     oversample     = int(inp.get("oversample", 3))
 
-    if trainer not in ("brush", "3dgut"):
-        return {"error": f"Unknown trainer '{trainer}'. Valid choices: brush, 3dgut"}
+    if trainer not in ("brush", "3dgut", "2dgs"):
+        return {"error": f"Unknown trainer '{trainer}'. Valid choices: brush, 3dgut, 2dgs"}
 
     if not video_url:
         return {"error": "Missing required field: video_url"}

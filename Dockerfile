@@ -51,6 +51,13 @@ RUN pip3 install --no-cache-dir --no-build-isolation \
         submodules/simple-knn \
         submodules/fused-ssim
 
+# ── 2DGS CUDA extension (diff-surfel-rasterization) ───────────────────────
+# simple-knn is identical to the 3DGS one already installed above
+COPY 2d-gaussian-splatting/submodules/diff-surfel-rasterization \
+     /app/2d-gaussian-splatting/submodules/diff-surfel-rasterization
+RUN pip3 install --no-cache-dir --no-build-isolation \
+        /app/2d-gaussian-splatting/submodules/diff-surfel-rasterization
+
 # ── FastMap ────────────────────────────────────────────────────────────────
 COPY fastmap /app/fastmap
 RUN cd /app/fastmap && pip3 install --no-cache-dir --no-build-isolation .
@@ -61,7 +68,15 @@ COPY Luminance-GS/gsplat/gsplat      /app/gsplat/gsplat
 COPY Luminance-GS/gsplat/examples    /app/gsplat/examples
 COPY Luminance-GS/gsplat/setup.py    /app/gsplat/setup.py
 COPY Luminance-GS/gsplat/README.md   /app/gsplat/README.md
-RUN cd /app/gsplat && pip3 install --no-cache-dir -e .
+# labeled_partition (used by 3DGUT kernels) requires sm_70+; drop Pascal (sm_61) for gsplat only
+RUN cd /app/gsplat && \
+    TORCH_CUDA_ARCH_LIST="7.0 7.5 8.0 8.6 8.9 9.0+PTX" \
+    pip3 install --no-cache-dir --no-build-isolation -e .
+
+# ── 3DGUT runtime CUDA extensions (need nvcc — must live in builder stage) ──
+RUN pip3 install --no-cache-dir --no-build-isolation \
+        "git+https://github.com/rahul-goel/fused-ssim@328dc9836f513d00c4b5bc38fe30478b4435cbb5" \
+        "git+https://github.com/harry7557558/fused-bilagrid@90f9788e57d3545e3a033c1038bb9986549632fe"
 
 
 # =============================================================================
@@ -146,9 +161,7 @@ RUN pip3 install --no-cache-dir \
         splines
 
 RUN pip3 install --no-cache-dir \
-        "git+https://github.com/nerfstudio-project/nerfview@4538024fe0d15fd1a0e4d760f3695fc44ca72787" \
-        "git+https://github.com/rahul-goel/fused-ssim@328dc9836f513d00c4b5bc38fe30478b4435cbb5" \
-        "git+https://github.com/harry7557558/fused-bilagrid@90f9788e57d3545e3a033c1038bb9986549632fe"
+        "git+https://github.com/nerfstudio-project/nerfview@4538024fe0d15fd1a0e4d760f3695fc44ca72787"
 
 # ── Copy compiled gsplat package from builder ──────────────────────────────
 COPY --from=builder /app/gsplat /app/gsplat
@@ -194,6 +207,14 @@ RUN chmod +x /app/gaussian-splatting/start.sh
 
 COPY fastmap /app/fastmap
 
+# ── 2DGS source (train.py + scene/gaussian_renderer/utils/arguments) ──────
+COPY 2d-gaussian-splatting/train.py          /app/2d-gaussian-splatting/
+COPY 2d-gaussian-splatting/scene             /app/2d-gaussian-splatting/scene
+COPY 2d-gaussian-splatting/gaussian_renderer /app/2d-gaussian-splatting/gaussian_renderer
+COPY 2d-gaussian-splatting/utils             /app/2d-gaussian-splatting/utils
+COPY 2d-gaussian-splatting/arguments        /app/2d-gaussian-splatting/arguments
+COPY 2d-gaussian-splatting/lpipsPyTorch     /app/2d-gaussian-splatting/lpipsPyTorch
+
 # ── hloc (SuperPoint + LightGlue) ─────────────────────────────────────────
 COPY hloc /app/hloc
 RUN pip3 install --no-cache-dir \
@@ -224,6 +245,10 @@ RUN sed -i \
 
 RUN sed -i \
     's|GSPLAT_DIR = Path("/home/ibrahim/Luminance-GS/gsplat")|GSPLAT_DIR = Path("/app/gsplat")|' \
+    /app/gaussian-splatting/video_to_3dgs.py
+
+RUN sed -i \
+    's|TWODGS_DIR = Path("/home/ibrahim/2d-gaussian-splatting")|TWODGS_DIR = Path("/app/2d-gaussian-splatting")|' \
     /app/gaussian-splatting/video_to_3dgs.py
 
 # ── Pre-download MASt3R weights (baked into image to avoid cold-start delay) ─

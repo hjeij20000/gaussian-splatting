@@ -30,7 +30,7 @@ Full pipeline: download video → extract frames → SfM reconstruction → [und
 
 ## Docker Image (RunPod serverless)
 - **Docker Hub:** `hjeij2000/video-to-3dgs:serverless`
-- **Latest deployed tag:** `:v13` ✅ (2026-04-06)
+- **Latest deployed tag:** `:v14` ✅ (2026-04-12)
 - **Image size:** ~8.5 GB (estimated)
 
 ### Build command (RELIABLE — use this from /home/ibrahim):
@@ -41,6 +41,13 @@ docker push hjeij2000/video-to-3dgs:v13
 docker push hjeij2000/video-to-3dgs:serverless
 ```
 **NOTE:** `docker buildx build --push` fails intermittently (DNS inside buildx container). Use plain `docker build` + `docker push`.
+
+### :v14 ✅ (2026-04-12)
+- Added 2DGS (`2dgs`) as third training backend (hbb1/2d-gaussian-splatting)
+- `diff-surfel-rasterization` CUDA extension built in Dockerfile builder stage
+- Bug: `colormap()` crash at eval step — fixed with `--test_iterations 999999` (matplotlib 3.8+ removed `tostring_rgb`)
+- Telegram bot: 2DGS added as third trainer button
+- Local test: hloc + 2dgs, IMG_2188(1).MOV, RTX 3070 Mobile → 258 MB PLY, 43.6m total (training 41.7m)
 
 ### :v13 ✅ (2026-04-06)
 - All :v12 changes included
@@ -74,6 +81,7 @@ docker push hjeij2000/video-to-3dgs:serverless
 |---------|-------------|--------------|-----------|
 | `brush` | Default. Lightweight Vulkan/wgpu trainer | ✅ Required | `--total-steps`, `--max-resolution` |
 | `3dgut` | gsplat MCMC + Unscented Transform. Handles camera distortion natively | ❌ Skipped | `--with_ut`, `--with_eval3d`, `--disable-viewer`, `--disable_video`, `--eval-steps 999999` |
+| `2dgs` | 2D Gaussian Splatting (hbb1/2d-gaussian-splatting). Better surface geometry | ✅ Required | `--lambda_dist 1000`, `--lambda_normal 0.05`, `--test_iterations 999999` |
 
 ### 3DGUT details
 - Trainer script: `Luminance-GS/gsplat/examples/simple_trainer.py mcmc`
@@ -252,16 +260,21 @@ curl "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/status/{JOB_ID}" \
 | 25 | 3DGUT eval DataLoader hangs at step 6999 | ✅ | :v13 (`--eval-steps 999999`) |
 | 26 | 3DGUT viser viewer sleeps 11 days after training | ✅ | :v13 (`--disable-viewer`) |
 | 27 | 3DGUT symlink fails on retry (`exists()` vs `is_symlink()`) | ✅ | :v13 |
+| 28 | 2DGS `colormap()` crashes at eval step — `tostring_rgb` removed in matplotlib 3.8+ | ✅ | :v14 (`--test_iterations 999999`) |
 
 ---
 
 ## Next Steps (priority order)
 
-1. **Push :v13 to Docker Hub** — build + push in progress
-2. **Force cold start on RunPod** — Set Max Workers → 0 → Save → restore
-3. **Test Brush regression on RunPod** — `{"sfm_backend": "hloc", "trainer": "brush", "fps": 2, "iterations": 7000}`
-4. **Test 3DGUT on RunPod** — `{"sfm_backend": "hloc", "trainer": "3dgut", "fps": 2, "iterations": 7000}`
-5. **Add 3DGUT benchmark row** to Benchmark Results once RunPod test passes
+1. **Force cold start on RunPod** — Set Max Workers → 0 → Save → restore (picks up :v13)
+2. **Test Brush regression on RunPod** — `{"sfm_backend": "hloc", "trainer": "brush", "fps": 2, "iterations": 7000}`
+3. **Test 3DGUT on RunPod** — `{"sfm_backend": "hloc", "trainer": "3dgut", "fps": 2, "iterations": 7000}`
+4. **Add 3DGUT benchmark row** to Benchmark Results once RunPod test passes
+5. **Update S3 bucket name** — new bucket name TBD. Once known, update in:
+   - RunPod template env var `AWS_S3_BUCKET` (via dashboard)
+   - Railway dashboard env var `AWS_S3_BUCKET`
+   - Local `gaussian-splatting/.env`
+   - `telegram_bot/.env.example`
 
 ---
 
@@ -281,6 +294,7 @@ curl "https://api.runpod.ai/v2/$RUNPOD_ENDPOINT_ID/status/{JOB_ID}" \
 | colmap | brush | 112 MB | 3:74m | 68.6s | 101.8s |
 | fastmap | brush | 161 MB | 3:75m | 72.7s | 114.6s |
 | hloc | brush | 80 MB | 3:09m | 60.6s | 89.8s |
+| hloc | 2dgs | 258 MB | 43:6m | 78.3s | 2503s |
 | mast3r | brush | 250 MB | 2:89m* | —* | 144.0s |
 | colmap | 3dgut | 185 MB | 13:06m | 70.1s | 664s |
 

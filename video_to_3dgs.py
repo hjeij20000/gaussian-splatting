@@ -204,6 +204,7 @@ FASTMAP_DIR = Path("/home/ibrahim/fastmap")
 HLOC_DIR = Path("/home/ibrahim/hloc")
 GSPLAT_DIR = Path("/home/ibrahim/Luminance-GS/gsplat")
 GSPLAT_TRAINER = GSPLAT_DIR / "examples" / "simple_trainer.py"
+TWODGS_DIR = Path("/home/ibrahim/2d-gaussian-splatting")
 
 
 def _needs_xvfb():
@@ -538,6 +539,42 @@ def train_3dgut(work_dir: Path, output_dir: Path, iterations: int = 7000):
     return elapsed
 
 
+def train_2dgs(work_dir: Path, output_dir: Path, iterations: int = 7000):
+    """Train using 2D Gaussian Splatting (hbb1/2d-gaussian-splatting).
+
+    Uses the same undistorted COLMAP layout as Brush:
+      {work_dir}/sparse/0/  + {work_dir}/images/
+    PLY output: {model_path}/point_cloud/iteration_{N}/point_cloud.ply
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    model_path = output_dir / "2dgs_model"
+
+    cmd = [
+        sys.executable, str(TWODGS_DIR / "train.py"),
+        "-s", str(work_dir),
+        "-m", str(model_path),
+        "--iterations", str(iterations),
+        "--save_iterations", str(iterations),
+        "--test_iterations", "999999",  # skip eval rendering (tostring_rgb removed in matplotlib 3.8+)
+        "--lambda_dist", "1000",
+        "--lambda_normal", "0.05",
+        "--quiet",
+    ]
+
+    elapsed = run_command(cmd, f"Training 2DGS model ({iterations} steps)")
+
+    ply_src = model_path / "point_cloud" / f"iteration_{iterations}" / "point_cloud.ply"
+    ply_dst = output_dir / f"export_{iterations}.ply"
+    if ply_src.exists():
+        shutil.copy(str(ply_src), str(ply_dst))
+        print(f"[INFO] 2DGS PLY copied to {ply_dst}")
+    else:
+        print(f"[ERROR] Expected PLY not found at {ply_src}")
+        sys.exit(1)
+
+    return elapsed
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Convert video to 3D Gaussian Splatting model",
@@ -587,8 +624,9 @@ Examples:
     parser.add_argument("--window-size", type=int, default=10,
                         help="MASt3R sliding window size for pair creation (default: 10)")
     parser.add_argument("--trainer", type=str, default='brush',
-                        choices=['brush', '3dgut'],
-                        help="Training backend: brush (default) or 3dgut (gsplat, skips undistortion)")
+                        choices=['brush', '3dgut', '2dgs'],
+                        help="Training backend: brush (default), 3dgut (gsplat, skips undistortion), "
+                             "or 2dgs (2D Gaussian Splatting, better geometry)")
 
     args = parser.parse_args()
 
@@ -673,6 +711,7 @@ SfM backend:{sfm_backend}
             print("[INFO] 3DGUT trainer — skipping undistortion (distortion handled natively)")
             timings['undistortion'] = 0
         else:
+            # brush and 2dgs both need undistorted images
             timings['undistortion'] = undistort_images(work_dir)
     else:
         print("[SKIP] COLMAP (using existing camera poses)")
@@ -684,6 +723,8 @@ SfM backend:{sfm_backend}
     # Step 3: Train 3DGS
     if args.trainer == '3dgut':
         timings['training'] = train_3dgut(work_dir, model_dir, args.iterations)
+    elif args.trainer == '2dgs':
+        timings['training'] = train_2dgs(work_dir, model_dir, args.iterations)
     else:
         timings['training'] = train_gaussian_splatting(work_dir, model_dir, args.iterations,
                                                        max_resolution=args.max_resolution)

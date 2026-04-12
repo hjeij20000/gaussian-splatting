@@ -49,12 +49,23 @@
       "max_resolution": 1920,
       "oversample": 3,
       "match_overlap": 5
+    },
+    {
+      "_description": "2dgs — 2D Gaussian Splatting trainer. Better surface geometry than Brush. Uses same COLMAP data layout.",
+      "video_url": "https://example.com/my_video.mp4",
+      "sfm_backend": "hloc",
+      "trainer": "2dgs",
+      "fps": 2,
+      "iterations": 7000,
+      "max_resolution": 1920,
+      "oversample": 3,
+      "match_overlap": 5
     }
   ],
   "argument_reference": {
     "video_url":      "URL to the input video (HTTP/HTTPS or Google Drive share link). Required.",
     "sfm_backend":    "SfM backend to use: mast3r | fastmap | colmap | hloc | pycusfm. Default: mast3r",
-    "trainer":        "Training backend: brush (default) | 3dgut. 3DGUT skips undistortion and handles camera distortion natively via gsplat (requires gsplat >= 1.4.0).",
+    "trainer":        "Training backend: brush (default) | 3dgut | 2dgs. 3DGUT skips undistortion and handles camera distortion natively. 2DGS produces sharper surface geometry.",
     "fps":            "Frames per second to extract from the video. Default: 2",
     "iterations":     "Number of Brush training steps. Default: 7000 (use 30000 for higher quality)",
     "max_resolution": "Max image dimension (pixels) passed to Brush trainer. Default: 1920",

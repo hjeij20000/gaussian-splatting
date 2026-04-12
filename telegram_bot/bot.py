@@ -268,12 +268,13 @@ async def ask_trainer(query, sess: dict):
     text = (
         "⚙️ *Step 6 / 6 — Training engine*\n\n"
         "• *Brush* — Fast, lightweight trainer. Works with all backends _(recommended)_\n"
-        "• *3DGUT* — NVIDIA gsplat trainer. Skips undistortion, handles camera distortion "
-        "natively. Slightly slower but higher fidelity on distorted footage."
+        "• *3DGUT* — NVIDIA gsplat trainer. Skips undistortion, handles camera distortion natively\n"
+        "• *2DGS* — 2D Gaussian Splatting. Sharper surfaces, better geometry reconstruction"
     )
     markup = kb([
         [("🖌 Brush",  "w:trainer:brush"),
          ("🚀 3DGUT",  "w:trainer:3dgut")],
+        [("🔷 2DGS",   "w:trainer:2dgs")],
     ])
     await query.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
 
